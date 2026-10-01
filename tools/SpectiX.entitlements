@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ┌──────────────────────────────────────────────────────────────────────┐
+         │ NO-NETWORK INVARIANT — do not add a networking entitlement here.     │
+         └──────────────────────────────────────────────────────────────────────┘
+         SpectiX makes a public promise that it performs no network activity
+         (README "Privacy: no network", spectix.app/privacy).
+         Users are told to audit that promise by dumping this very list back out
+         of the shipped binary with codesign (the exact command is in README.md
+         "Privacy" and docs/permissions.md — it cannot be repeated here, see the
+         XML note at the bottom), so anything added below becomes a public claim
+         the moment it ships.
+         Never add com.apple.security.network.client / .network.server, and
+         never add an App Sandbox key to "make the promise stronger" — the app
+         reads arbitrary paths under ~/.claude and drives other apps through
+         AXUIElement, neither of which survives the sandbox. The guarantee is
+         upheld by there being no networking code at all (build.sh enforces
+         this at compile time), not by a sandbox denying it at runtime.
+
+         The hardened runtime (required for notarization) blocks Apple Events by
+         default. Jump-to-terminal spawns /usr/bin/osascript to raise Terminal /
+         VSCode windows (see spawnResponsible in main.swift), so without this the
+         whole jump path silently dies on notarized builds.
+         Accessibility (AXUIElement) and reading ~/.claude need no entitlement —
+         they are TCC grants, not runtime capabilities.
+
+         XML note: a comment may never contain two consecutive hyphens, so no
+         command line carrying a long option can be quoted in here at all.
+         Point at README.md / docs/permissions.md instead. Getting this wrong
+         breaks the file only on the release path — build.sh passes this file to
+         codesign solely when SIGN_ID is set, so an ad-hoc local build stays
+         green and the damage only surfaces mid-notarization. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

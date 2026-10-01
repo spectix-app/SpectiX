@@ -1,0 +1,21 @@
+{
+  "name": "spectix",
+  "description": "Live status for every Claude Code session in your macOS menu bar — which one needs approval, which is still working, which is done. Installs the status hooks; pairs with the SpectiX menu bar app.",
+  "version": "0.1.0",
+  "author": {
+    "name": "SpectiX Lab",
+    "email": "hello@spectix.app",
+    "url": "https://spectix.app"
+  },
+  "homepage": "https://spectix.app",
+  "repository": "https://github.com/spectix-app/SpectiX.git",
+  "license": "GPL-3.0-only",
+  "keywords": [
+    "menubar",
+    "macos",
+    "status",
+    "session-monitor",
+    "notifications",
+    "hooks"
+  ]
+}

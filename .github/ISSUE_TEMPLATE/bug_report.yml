@@ -1,0 +1,56 @@
+name: Bug report
+description: Wrong status, wrong jump target, or something broken.
+labels: ["bug"]
+body:
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 26.0"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SpectiX version
+      description: Shown in Settings, or "built from source at <commit>".
+    validations:
+      required: true
+  - type: dropdown
+    id: terminal
+    attributes:
+      label: Terminal / editor
+      multiple: true
+      options:
+        - Terminal
+        - iTerm2
+        - Ghostty
+        - VS Code
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: shown
+    attributes:
+      label: What status SpectiX showed
+      placeholder: "e.g. the row stayed red (needs you) after I approved the permission"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: textarea
+    id: state
+    attributes:
+      label: State files
+      description: >-
+        For status bugs, attach the relevant files from ~/.claude/spectix/
+        (for example state-<tty> and step-<tty>). They are plain text; check
+        them for anything you do not want to share first.

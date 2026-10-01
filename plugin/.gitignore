@@ -1,0 +1,5 @@
+# Build output of sync.sh — the canonical copies live in ../hooks/.
+# Keeping them out of git is what makes "the hook exists once" enforceable.
+hooks/spectix-status.sh
+hooks/spectix-usage.py
+hooks/CHECKSUMS

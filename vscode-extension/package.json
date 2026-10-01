@@ -1,0 +1,12 @@
+{
+  "name": "focus",
+  "displayName": "SpectiX Focus",
+  "description": "Lets SpectiX focus the exact integrated terminal of a Claude session across any window, and auto-open a terminal when it opens a project.",
+  "publisher": "spectix",
+  "version": "0.0.8",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished", "onUri"],
+  "main": "./extension.js",
+  "contributes": {}
+}
