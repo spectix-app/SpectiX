@@ -68,4 +68,4 @@ Then restart your Claude Code sessions (or run `/clear`) so the hooks take effec
 
 ## License
 
-GPL-3.0, like the rest of SpectiX — see [LICENSE](../LICENSE).
+FSL-1.1-ALv2 (Functional Source License), like the rest of SpectiX — see [LICENSE](../LICENSE).

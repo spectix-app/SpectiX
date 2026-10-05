@@ -2,7 +2,7 @@
 # Post-build audit — the two questions worth re-asking of every build before it
 # leaves this machine.
 #
-#   [1] LICENSE  is it still the verbatim GPL-3.0 text, shipped inside the bundle,
+#   [1] LICENSE  is it still the verbatim FSL-1.1-ALv2 text, shipped inside the bundle,
 #                and does the README still carry the no-network promise?
 #   [2] LEAK     does this build carry anything identifying about whoever built it —
 #                home path, email, machine name, real name? And how much longer can
@@ -43,15 +43,18 @@ echo "审计目标: $APP"
 echo "bundle id: ${BUNDLE_ID:-?}   架构: $(lipo -archs "$BIN" 2>/dev/null || echo '?')"
 
 # ── [1] LICENSE ──────────────────────────────────────────────────────────────
-# The repo is GPL-3.0 now: the license is the verbatim GPL text, and the
-# no-network promise lives in the README instead of a license clause. Both are
-# what the site and the bundle point at, so both must still be there.
+# Releases after 1.9 are FSL-1.1-ALv2 (1.9 and earlier were GPL-3.0): the license
+# is the verbatim FSL text, and the no-network promise lives in the README
+# instead of a license clause. Both are what the site and the bundle point at,
+# so both must still be there.
 head_ "[1/2] LICENSE 与不联网承诺"
 
 if [ ! -f LICENSE ]; then
   fail "LICENSE 文件不存在"
+elif [ "$(head -1 LICENSE)" != "# Functional Source License, Version 1.1, ALv2 Future License" ]; then
+  fail "LICENSE 首行不是「# Functional Source License, Version 1.1, ALv2 Future License」—— 许可证被换掉了？"
 elif [ "$(shasum -a 256 < LICENSE)" = "$(shasum -a 256 < opensource/overlay/LICENSE)" ]; then
-  pass "LICENSE 与 opensource/overlay/LICENSE（GPL-3.0 原文）一致"
+  pass "LICENSE 是 FSL-1.1-ALv2，且与 opensource/overlay/LICENSE 一致"
 else
   fail "LICENSE 与 opensource/overlay/LICENSE 不一致 —— 包里和公开仓的许可证会对不上"
 fi
@@ -59,7 +62,7 @@ fi
 if [ -f "$APP/Contents/Resources/LICENSE" ] && cmp -s LICENSE "$APP/Contents/Resources/LICENSE"; then
   pass "包内带了同一份 LICENSE"
 else
-  fail "包内 Contents/Resources/LICENSE 缺失或不是当前 LICENSE —— GPL 要求随二进制附许可证"
+  fail "包内 Contents/Resources/LICENSE 缺失或不是当前 LICENSE —— FSL 的 Redistribution 条款要求每份副本都附上许可证"
 fi
 
 for readme in README.md opensource/overlay/README.md; do

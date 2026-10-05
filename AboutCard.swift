@@ -2,7 +2,7 @@ import Cocoa
 
 // The 关于 card at the foot of the settings pane: icon, name, version, and the
 // three links off this app — the home page, the page that says how to report a
-// bug, and the GPL source repo.
+// bug, and the source repo (FSL-1.1-ALv2, source-available).
 //
 // ⚠️ Both open a browser and that is the ONLY thing they may ever do. This
 // app's whole trust story is that it never makes a network call — the home page
@@ -85,10 +85,10 @@ final class AboutCard: NSView {
         addSubview(version)
 
         // Sits on the version line rather than with the two links below: it is a
-        // fact about this build (GPL-3.0, here is its source), not an ask.
+        // fact about this build (FSL-1.1, here is its source), not an ask.
         sourceBtn.isBordered = false
         sourceBtn.attributedTitle = NSAttributedString(
-            string: "GPL-3.0 · " + L("源代码 →", "Source code →"),
+            string: "FSL-1.1 · " + L("源代码 →", "Source code →"),
             attributes: [.foregroundColor: NSColor.secondaryLabelColor,
                          .font: Theme.font(11.5, .regular)])
         sourceBtn.setContentHuggingPriority(.required, for: .horizontal)

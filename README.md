@@ -71,15 +71,17 @@ An outbound firewall such as [Little Snitch](https://obdev.at/products/littlesni
 
 ## Contributing
 
-SpectiX is open source but not open to code contributions: pull requests are closed without review. Bug reports and ideas are very welcome as [issues](https://github.com/spectix-app/SpectiX/issues/new/choose). See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
+SpectiX is source-available but not open to code contributions: pull requests are closed without review. Bug reports and ideas are very welcome as [issues](https://github.com/spectix-app/SpectiX/issues/new/choose). See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
-[GPL-3.0](LICENSE). The "SpectiX" name and logo are not licensed for use by forks; please rename and rebrand if you distribute a modified version.
+SpectiX is source-available under the Functional Source License ([FSL-1.1-ALv2](LICENSE)). Use it free — personally or at work. You may not sell it or ship a competing product built from it. Every release becomes Apache-2.0 open source two years after it ships. Versions 1.9 and earlier were released under GPL-3.0.
+
+The "SpectiX" name and logo are not licensed for use by forks; please rename and rebrand if you distribute a modified version.
 
 ## Third-party assets
 
-The two photos used by the break reminder are not covered by the GPL. They are used under the [Pexels License](https://www.pexels.com/license/):
+The two photos used by the break reminder are not covered by the SpectiX license. They are used under the [Pexels License](https://www.pexels.com/license/):
 
 - `tools/cat-stretch.jpg`: photo by Tamba Budiarsana, https://www.pexels.com/photo/979247/
 - `tools/cat-glasses.jpg`: photo by Pet foto, https://www.pexels.com/photo/17753986/

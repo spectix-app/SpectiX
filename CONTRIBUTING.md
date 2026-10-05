@@ -1,6 +1,6 @@
 # Contributing to SpectiX
 
-**SpectiX is open source, but not open to code contributions.** Pull requests are closed without review. This keeps the code under a single author, so the project can change direction quickly.
+**SpectiX is source-available, but not open to code contributions.** Pull requests are closed without review. This keeps the code under a single author, so the project can change direction quickly.
 
 What helps, and is very welcome:
 
@@ -8,7 +8,7 @@ What helps, and is very welcome:
 - **Feature ideas and feedback**: open an issue. Good ideas get built, and the issue is credited in the changelog.
 - **Security issues**: report them privately, see [SECURITY.md](SECURITY.md).
 
-You are free to fork under the [GPL-3.0](LICENSE). Please rename and rebrand a modified version you distribute.
+You may fork and modify it under the [FSL-1.1-ALv2](LICENSE): use it free, personally or at work, but do not sell it or ship a competing product built from it. Every release becomes Apache-2.0 two years after it ships. Please rename and rebrand a modified version you distribute.
 
 ## Building from source
 

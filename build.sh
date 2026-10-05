@@ -188,7 +188,7 @@ mkdir -p "$RES_DIR/hooks"
 cp hooks/spectix-status.sh hooks/spectix-usage.py "$RES_DIR/hooks/"
 # Break-timer photos (BreakPanel): Pexels-licensed, see docs/break-reminder.md.
 cp tools/cat-stretch.jpg tools/cat-glasses.jpg "$RES_DIR/"
-# GPL-3.0 requires the license text to travel with every copy of the binary.
+# FSL-1.1 (Redistribution clause) requires every copy to carry these terms.
 cp LICENSE "$RES_DIR/LICENSE"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
