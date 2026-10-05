@@ -704,9 +704,9 @@ final class ToastManager {
         // it — it only clears when you actually answer (resolve → green ✓ → fade) or hit
         // its ✕. Jumping to the terminal isn't answering, so the red stays up as a
         // reminder. An informational (done) banner still dismisses on click, as before.
-        // A "rest" banner (BreakReminder) is sticky too — a nudge that fades in 8s is
-        // one you never saw — but a click simply clears it: there's no session to look at.
-        let sticky = (status == "needs" || status == "rest")
+        // A "rest" banner (BreakReminder) fades like a done one: the chip and strip stay
+        // red until you rest, so the banner is only the heads-up (2026-10-04 user call).
+        let sticky = status == "needs"
         let toast = makeToast(title: title, subtitle: subtitle, icon: icon, status: status, path: path,
                               onClick: { [weak self] in
                                   onClick()
@@ -1031,7 +1031,7 @@ final class ToastManager {
         // down, so it renders as a whole circle hanging at the corner rather than a
         // sliver sheared off by the banner's mask.
         var closeBtn: ToastCloseButton?
-        if status == "needs" || status == "rest" {
+        if status == "needs" {
             let cb = ToastCloseButton()
             cb.onClose = onClose
             cb.alphaValue = 0
@@ -1085,7 +1085,7 @@ final class ToastManager {
         tileRing.configure(status: status)
         return Toast(panel: panel, path: path, iconTile: iconTile, tileRing: tileRing,
                      pill: pill, closeButton: closeBtn,
-                     sticky: status == "needs" || status == "rest")
+                     sticky: status == "needs")
     }
 }
 
@@ -1422,6 +1422,10 @@ class AppController: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange),
             name: AppSettings.didChange, object: nil)
+        NotificationCenter.default.addObserver(
+            forName: BreakReminder.restStarted, object: nil, queue: .main) { _ in
+            ToastManager.shared.dismiss(Self.breakToastPath)
+        }
 
         // A language switch changes text baked into statically-built labels, so the
         // windows + popover must be rebuilt wholesale to re-resolve through L().
@@ -4459,8 +4463,8 @@ class AppController: NSObject, NSApplicationDelegate {
         // and the red "needs" banner must not have a tomato stacked on top of it.
         let busy = rows.contains { $0.status == "working" || $0.status == "needs" }
         let event = BreakReminder.shared.poll(idle: secondsSinceLastInput(), running: running, busy: busy)
-        // The banner is sticky and only its own click took it down, so resting from the
-        // strip (or just walking away) left "该休息了" up for the whole break.
+        // Backstop for restStarted: a rest that began mid-poll, or an idle that ended
+        // the round, must not leave "该休息了" up.
         let phase = BreakReminder.shared.phase
         if phase != .working && phase != .overtime { ToastManager.shared.dismiss(Self.breakToastPath) }
         guard case .overtime(let sec)? = event else { return }

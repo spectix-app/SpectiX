@@ -1092,6 +1092,10 @@ final class MainWindowController: NSWindowController {
         showTab(.sessions)
         statsHeader.breakPanel.setExpanded(true)
         breakChip.refresh()
+        // After the window has come forward and re-fit, or the swell plays off screen.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.statsHeader.breakPanel.pop()
+        }
     }
 
     private func adjustWindowHeight() {

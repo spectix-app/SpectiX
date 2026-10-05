@@ -96,6 +96,24 @@ leak_scan "无真实 home 路径" "/Users/$USER"
 [ -n "$LOCALPART" ]  && leak_scan "无邮箱用户名"     "$LOCALPART"
 [ -n "$MACHINE" ]    && leak_scan "无机器名"        "$MACHINE"
 
+# The identifiers above come from this machine's config, so they miss names that
+# were baked in some other way: 1.0–1.8 shipped the author's personal reverse-DNS prefix in the binary's
+# string table (old bundle ids kept for migration) and none of the checks above saw it.
+# The public-repo exporter already keeps the list of names that must never go out;
+# read it from there so the two gates cannot drift apart.
+PERSONAL=$(sed -n "s/^PERSONAL='\(.*\)'$/\1/p" tools/export-public.sh)
+if [ -z "$PERSONAL" ]; then
+  fail "读不到 tools/export-public.sh 里的 PERSONAL 名单 —— 无法扫个人名字"
+else
+  hits=$(LC_ALL=C grep -rlaiE "$PERSONAL" "$APP" 2>/dev/null | head -5)
+  if [ -z "$hits" ]; then
+    pass "无个人名字 / 账号（export-public.sh 的 PERSONAL 名单）"
+  else
+    fail "包里有个人名字 / 账号 —— strings 一扫就能看到"
+    echo "$hits" | while read -r f; do note "${f#$APP/}: $(LC_ALL=C grep -aoiE "$PERSONAL" "$f" | sort -u | head -3 | tr '\n' ' ')"; done
+  fi
+fi
+
 # The placeholder home is the tell that a real one was never interpolated: the app
 # shows example paths in its own UI, and "/Users/you" is what they must read as.
 if grep -qaF "/Users/you" "$BIN" 2>/dev/null; then

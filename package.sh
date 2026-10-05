@@ -26,7 +26,7 @@ cd "$(dirname "$0")"
 APP="SpectiX.app"
 INSTALLER="installer/build/Install SpectiX.app"
 NAME="SpectiX"
-VERSION="1.8"
+VERSION="1.9"
 ZIP="$NAME-$VERSION.zip"
 # Deliberately still "taskbeacon": this names a credential the user stored once with
 # `notarytool store-credentials`, not anything the recipient ever sees. Renaming it
@@ -56,9 +56,17 @@ SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
 NOTARIZED=0
 if [ -n "$SIGN_ID" ]; then
   echo "→ release signing as: $SIGN_ID"
-  if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+  if NOTARY_ERR=$(xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" 2>&1); then
     NOTARIZED=1
+  elif echo "$NOTARY_ERR" | grep -qi "agreement"; then
+    # The profile is fine; Apple refuses every call until the account holder accepts
+    # the updated Program License Agreement. Shipping a silently un-notarized build
+    # here would be a regression users hit as a Gatekeeper block, so stop instead.
+    echo "✖ notarization refused: Apple Developer agreement missing or expired (HTTP 403)."
+    echo "  The account holder signs it at https://developer.apple.com/account, then rerun."
+    exit 1
   else
+    echo "$NOTARY_ERR" | head -2 | sed 's/^/    /'
     echo "⚠️  notarytool profile '$NOTARY_PROFILE' not stored — signed but NOT notarized."
     echo "    Run: xcrun notarytool store-credentials $NOTARY_PROFILE"
   fi

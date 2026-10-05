@@ -1,10 +1,6 @@
-## What and why
+**SpectiX does not accept code contributions, so this pull request will be closed without review.**
 
-<!-- One focused change. Link the issue if there is one. -->
+If you found a bug or have an idea, please open an issue instead:
+https://github.com/spectix-app/SpectiX/issues/new/choose
 
-## Checklist
-
-- [ ] Builds with `./build.sh`
-- [ ] No networking added to the app binary (any network use is out of process and opt-in)
-- [ ] Before/after screenshots attached for UI changes (`tools/*-preview.sh` renders them offscreen)
-- [ ] All commits signed off (`git commit -s`, DCO)
+See https://github.com/spectix-app/SpectiX/blob/main/CONTRIBUTING.md for why.

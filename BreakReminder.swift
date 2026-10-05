@@ -81,6 +81,9 @@ final class BreakReminder {
     /// second instead of by the 2.5s refresh. `.common` so dragging a window doesn't
     /// freeze the figure.
     static let tick = Notification.Name("BreakReminder.tick")
+    /// Posted when a rest begins, so the 该休息了 banner goes the moment you press 现在休息
+    /// instead of waiting for the next refresh (which can be seconds away).
+    static let restStarted = Notification.Name("BreakReminder.restStarted")
     private var ticker: Timer?
 
     private init() {
@@ -181,6 +184,7 @@ final class BreakReminder {
         restAuto = auto
         heldBanner = nil
         autoShowPending = false
+        NotificationCenter.default.post(name: Self.restStarted, object: nil)
     }
 
     /// A new work length picked from the strip's clock. The running round re-derives
@@ -651,6 +655,24 @@ final class BreakPanel: NSView {
         if !on { peeking = false }
         if on { BreakReminder.shared.autoShowPending = false; refresh() }
         onLayoutChange?()
+    }
+
+    /// One quick swell of the strip — the banner was clicked and you landed here, so
+    /// show which part of the window it meant. Scales about the centre (a layer-backed
+    /// view's anchor is its corner); 1.04 keeps the overshoot inside the shadow budget.
+    func pop() {
+        guard expanded, let layer = content.layer else { return }
+        let b = layer.bounds
+        let up = CATransform3DConcat(
+            CATransform3DConcat(CATransform3DMakeTranslation(-b.midX, -b.midY, 0),
+                                CATransform3DMakeScale(1.04, 1.04, 1)),
+            CATransform3DMakeTranslation(b.midX, b.midY, 0))
+        let a = CAKeyframeAnimation(keyPath: "transform")
+        a.values = [CATransform3DIdentity, up, CATransform3DIdentity].map { NSValue(caTransform3D: $0) }
+        a.keyTimes = [0, 0.4, 1]
+        a.duration = 0.45
+        a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(a, forKey: "pop")
     }
 
     /// The clock's menu: work lengths, or rest lengths while resting, current ticked.

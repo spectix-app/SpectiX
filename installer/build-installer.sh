@@ -61,8 +61,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Install SpectiX</string>
     <key>CFBundleDisplayName</key><string>Install SpectiX</string>
     <key>CFBundleIdentifier</key><string>app.spectix.SpectiX.installer</string>
-    <key>CFBundleVersion</key><string>1.8</string>
-    <key>CFBundleShortVersionString</key><string>1.8</string>
+    <key>CFBundleVersion</key><string>1.9</string>
+    <key>CFBundleShortVersionString</key><string>1.9</string>
     <key>CFBundleExecutable</key><string>SpectiXInstaller</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>

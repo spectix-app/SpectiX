@@ -77,8 +77,8 @@
 
 - 状态串 `"rest"`：不是会话状态，`Status.accent / fill` 里直接短路成 `claudeOrange`，**没有主题槽位、不进用户配色**；`Status.label` 给「休息 / Rest」；`Status.bucket` 不认它。
 - path 固定 `"!break"`：`ToastManager.retain` 见 `!` 前缀直接跳过——它不属于任何会话，否则 6 秒后会被当孤儿清掉。
-- 常驻规则：`sticky = needs || rest`，但点击行为分开——needs 点了变「查看」眼睛，rest 点了打开主窗口并展开面板再关掉横幅。
-- **离开工作态就收横幅**：`maybeRemindBreak` 每次轮询时只要状态不是 working / overtime（在横条上点了休息、走开被判成休息、休息结束），就 `dismiss("!break")`。以前只有点横幅本身才会关，从横条点休息的话，「该休息了」会在整个休息期间一直挂着（2026-09-18）。
+- **不常驻**：`sticky = needs`，rest 和 done 一样 8 秒后自己淡出、没有 ✕（2026-10-04 用户定：芯片和横条到点就变红，横幅只负责提醒一下）。点它 → 打开主窗口、展开横条、横条**放大一下**（`BreakPanel.pop`，1.04 倍 0.45 秒，延后 0.25 秒等窗口到前台），再关横幅。
+- **进休息就收横幅**：`startRest` 发 `BreakReminder.restStarted`，`AppController` 收到当场 `dismiss("!break")` —— 只靠轮询会慢几秒。`maybeRemindBreak` 每次轮询照样兜底：状态不是 working / overtime 就收。
 
 ## 主按钮 1.5 秒防连点
 
