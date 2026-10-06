@@ -1264,9 +1264,9 @@ final class AgentCell: NSTableCellView, Hoverable {
         super.hitTest(point) == nil ? nil : self
     }
 
-    func setHovered(_ lift: HoverLift, groupCenter: NSPoint?, groupRole: SliceRole?, animated: Bool) {
+    func setHovered(_ lift: HoverLift, groupFrame: NSRect?, groupRole: SliceRole?, animated: Bool) {
         card.setHover(lift,
-                      groupCenter: groupCenter.map { card.convert($0, from: self) },
+                      groupFrame: groupFrame.map { card.convert($0, from: self) },
                       groupRole: groupRole,
                       animated: animated)
     }
@@ -2486,9 +2486,10 @@ final class GroupCard: NSView {
     // merely hovered row never gets one — that separation is the whole point of the
     // feature, so do not fold this back into HoverLift.
     private var selected = false
-    // The group's shared center in THIS slice's coordinate space, set alongside a
-    // .group lift — the anchor every slice scales about so the union grows as one card.
-    private var groupCenter: NSPoint?
+    // The group's union rect in THIS slice's coordinate space, set alongside a .group
+    // lift — its center is the anchor every slice scales about so the union grows as
+    // one card, and its height caps the vertical scale (see groupScaleTransform).
+    private var groupFrame: NSRect?
     // Where this slice sits in the LIFTED group, which is not always where it sits in
     // the enclosure: an expanded session row and its agent segment lift out of the
     // MIDDLE of the project card (方案 16), and a shadow cast for the enclosure's roles
@@ -2773,8 +2774,8 @@ final class GroupCard: NSView {
         apply(animated: false)
     }
 
-    /// `groupCenter`: for a .group lift, the group's shared center converted into this
-    /// slice's coordinate space (the scale anchor). Ignored for other lifts.
+    /// `groupFrame`: for a .group lift, the group's union rect converted into this
+    /// slice's coordinate space (its center is the scale anchor). Ignored for other lifts.
     /// `groupRole`: this slice's place in that group — see the `groupRole` property.
     /// Light (or clear) this slice's selection halo. Independent of `setHover` on
     /// purpose — see the `selected` field.
@@ -2798,16 +2799,16 @@ final class GroupCard: NSView {
         return CGPath(roundedRect: bounds, cornerWidth: r, cornerHeight: r, transform: nil)
     }
 
-    func setHover(_ lift: HoverLift, groupCenter: NSPoint? = nil,
+    func setHover(_ lift: HoverLift, groupFrame: NSRect? = nil,
                   groupRole: SliceRole? = nil, animated: Bool = true) {
         // A held group can change shape under the pointer (an agent node appears, a row
         // reorders), which moves the anchor and the group's edges without the lift
         // itself changing — so that case has to re-apply too, or the slice keeps
         // scaling about a stale center.
         let reshaped = lift == .group
-            && (groupCenter != self.groupCenter || groupRole != self.groupRole)
+            && (groupFrame != self.groupFrame || groupRole != self.groupRole)
         if lift == .group {
-            self.groupCenter = groupCenter
+            self.groupFrame = groupFrame
             self.groupRole = groupRole
         }
         guard lift != self.lift || reshaped else { return }
@@ -2842,15 +2843,23 @@ final class GroupCard: NSView {
     // not its own — one affine map for all slices, so the union grows as a single card
     // and the seams between slices stay perfectly flush.
     private var groupScaleTransform: CATransform3D {
-        guard let c = groupCenter else { return CATransform3DIdentity }
+        guard let g = groupFrame, g.height > 0 else { return CATransform3DIdentity }
+        let c = NSPoint(x: g.midX, y: g.midY)
         // 1.012 was invisible on the popover's narrow cards — a 264pt card grew 1.6pt per
         // side, and arrow-key nav (which can only land on headers, so it ONLY ever gets
         // this lift) read as "nothing happened". Bounded above by cardCellInset: the card
         // has 18pt of cell margin to grow into before the scroll clip starts slicing the
         // lift shadow flat (see docs/design-system.md).
         let s: CGFloat = 1.03
+        // ★ The vertical growth is capped in POINTS, not left at s (改这块前必读). The
+        // labels don't wear this transform (see decorationLayers), so a slice's box drifts
+        // off its own text by its distance from the center × (s − 1). A header + a few
+        // rows drifts ~4pt and reads as a lift; a session with 11 agent nodes is ~1100pt
+        // tall and drifted ~17pt at its ends — every box visibly off its text
+        // (2026-10-05 用户截图). 8pt total is what a ~260pt group gets from s anyway.
+        let sy = 1 + min(s - 1, 8 / g.height)
         var t = CATransform3DMakeTranslation(c.x, c.y, 0)
-        t = CATransform3DScale(t, s, s, 1)
+        t = CATransform3DScale(t, s, sy, 1)
         return CATransform3DTranslate(t, -c.x, -c.y, 0)
     }
 

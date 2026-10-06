@@ -329,12 +329,12 @@ protocol HandleProviding: AnyObject {
 protocol Hoverable: AnyObject {
     // The table drives which lift each cell wears: .card for a hovered child row or a
     // collapsed solo header, .group for every slice of an expanded header's group, .none
-    // at rest. For .group, `groupCenter` is the whole group's center in the CELL's
-    // coordinate space — the shared anchor every slice scales about so the group grows
+    // at rest. For .group, `groupFrame` is the whole group's union rect in the CELL's
+    // coordinate space — its center is the shared anchor every slice scales about so the group grows
     // as one card (方案 H1) — and `groupRole` is where this row sits within the LIFTED
     // group, which an agent cluster needs because it lifts out of the middle of its
     // project card. Both nil for the other lifts. See ReorderTableView.reconcile.
-    func setHovered(_ lift: HoverLift, groupCenter: NSPoint?, groupRole: SliceRole?, animated: Bool)
+    func setHovered(_ lift: HoverLift, groupFrame: NSRect?, groupRole: SliceRole?, animated: Bool)
 
     // The selection halo, driven on its own channel because selection outlives a
     // hover: the row whose terminal is focused (or that arrow keys landed on) stays
@@ -615,16 +615,15 @@ final class ReorderTableView: NSTableView {
         guard rows != renderedRows || lift != renderedLift else { return }
         // The group's union rect (table coords) — its center is the shared anchor every
         // slice scales about, so the whole group lifts as one card (方案 H1).
-        var groupCenter: NSPoint?
+        var groupFrame: NSRect?
         if lift == .group, let first = rows.first {
-            let union = rows.dropFirst().reduce(rect(ofRow: first)) { $0.union(rect(ofRow: $1)) }
-            groupCenter = NSPoint(x: union.midX, y: union.midY)
+            groupFrame = rows.dropFirst().reduce(rect(ofRow: first)) { $0.union(rect(ofRow: $1)) }
         }
         for r in renderedRows where !rows.contains(r) {
-            applyHover(row: r, lift: .none, groupCenter: nil, groupRole: nil, animated: animated)
+            applyHover(row: r, lift: .none, groupFrame: nil, groupRole: nil, animated: animated)
         }
         for (i, r) in rows.enumerated() {
-            applyHover(row: r, lift: lift, groupCenter: groupCenter,
+            applyHover(row: r, lift: lift, groupFrame: groupFrame,
                        groupRole: lift == .group ? Self.groupRole(at: i, of: rows.count) : nil,
                        animated: animated)
         }
@@ -668,7 +667,7 @@ final class ReorderTableView: NSTableView {
         n <= 1 ? .solo : (i == 0 ? .top : (i == n - 1 ? .bottom : .middle))
     }
 
-    private func applyHover(row: Int, lift: HoverLift, groupCenter: NSPoint?,
+    private func applyHover(row: Int, lift: HoverLift, groupFrame: NSRect?,
                             groupRole: SliceRole?, animated: Bool) {
         guard row >= 0 else { return }
         // Raise the whole row above its neighbours so the lift's shadow (and any scale
@@ -677,7 +676,7 @@ final class ReorderTableView: NSTableView {
         guard let cellView = view(atColumn: 0, row: row, makeIfNecessary: false),
               let cell = cellView as? Hoverable else { return }
         cell.setHovered(lift,
-                        groupCenter: groupCenter.map { cellView.convert($0, from: self) },
+                        groupFrame: groupFrame.map { cellView.convert($0, from: self) },
                         groupRole: groupRole,
                         animated: animated)
     }
@@ -1324,9 +1323,9 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
 
     // Hover is driven by the table (see ReorderTableView), not a per-cell tracking
     // area — one hovered row, hit-tested, no synthesized-enter waterfall.
-    func setHovered(_ lift: HoverLift, groupCenter: NSPoint?, groupRole: SliceRole?, animated: Bool) {
+    func setHovered(_ lift: HoverLift, groupFrame: NSRect?, groupRole: SliceRole?, animated: Bool) {
         card.setHover(lift,
-                      groupCenter: groupCenter.map { card.convert($0, from: self) },
+                      groupFrame: groupFrame.map { card.convert($0, from: self) },
                       groupRole: groupRole,
                       animated: animated)
     }
@@ -1735,9 +1734,9 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
 
     // Hover is driven by the table (see ReorderTableView), not a per-cell tracking
     // area — one hovered row, hit-tested, no synthesized-enter waterfall.
-    func setHovered(_ lift: HoverLift, groupCenter: NSPoint?, groupRole: SliceRole?, animated: Bool) {
+    func setHovered(_ lift: HoverLift, groupFrame: NSRect?, groupRole: SliceRole?, animated: Bool) {
         card.setHover(lift,
-                      groupCenter: groupCenter.map { card.convert($0, from: self) },
+                      groupFrame: groupFrame.map { card.convert($0, from: self) },
                       groupRole: groupRole,
                       animated: animated)
         // Row-local flourishes (rail pop, step marquee) belong to the row actually

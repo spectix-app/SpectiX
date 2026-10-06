@@ -26,7 +26,7 @@ cd "$(dirname "$0")"
 APP="SpectiX.app"
 INSTALLER="installer/build/Install SpectiX.app"
 NAME="SpectiX"
-VERSION="1.9"
+VERSION="1.10"
 ZIP="$NAME-$VERSION.zip"
 # Deliberately still "taskbeacon": this names a credential the user stored once with
 # `notarytool store-credentials`, not anything the recipient ever sees. Renaming it
