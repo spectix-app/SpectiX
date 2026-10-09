@@ -1,19 +1,81 @@
 # SpectiX
 
-Menu bar status for every Claude Code & Codex session — running, done, waiting for you.
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple)](https://spectix.app)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
+
+Menu bar status for every Claude Code & Codex session — running, done, waiting for you — and one click to its exact terminal.
 
 ![Click a session in SpectiX and land in its VS Code terminal pane, ringed](docs/demo.gif)
 
-[Watch the 90-second tour (with sound)](https://spectix.app/assets/spectix-tour.mp4)
+<p align="center">
+  <a href="https://spectix.app/assets/spectix-tour.mp4">
+    <img src="https://spectix.app/assets/spectix-tour-poster.jpg" width="720" alt="Play the 97-second SpectiX tour video">
+  </a>
+  <br>
+  <a href="https://spectix.app/assets/spectix-tour.mp4">▶ Watch the 97-second tour (with sound)</a>
+</p>
 
-## What does it do?
-
-1. **Tells you which tab is ready** — every Claude Code and Codex session, at a glance: working, done, needs you, or idle.
-2. **Jumps you there in one click** — to that exact terminal, even the exact pane inside a VS Code window.
-3. **Taps you on the shoulder** — a toast when a session finishes or needs you; `⌃⌥⌘N` jumps to the next one waiting.
-4. **Shows what each one is up to** — the current step (`▸ Edit · main.swift`), time, tokens, model and context used.
+**Download:** https://spectix.app
 
 Pure Swift + Cocoa, single binary, no third-party dependencies. macOS 13+.
+
+## What it does
+
+### Every session, live
+
+Each Claude Code and Codex session shows up as a row, grouped by project: working, needs you, done, or idle. Every row also shows elapsed time, tokens, how much context is used, and which model is running.
+
+<p align="center">
+  <img src="docs/media/live.gif" width="300" alt="SpectiX session list grouped by project, rows switching between working, needs you, done and idle, with time, tokens, context and model">
+</p>
+
+### One click to the right terminal
+
+Click a row and its terminal window comes to the front, outlined by a ring in the session's status color, so you see at once where you landed.
+
+<p align="center">
+  <img src="docs/media/jump.gif" width="720" alt="Clicking a session row brings its Terminal window forward with a breathing status-colored ring">
+</p>
+
+### The exact pane inside VS Code
+
+With several terminals open in one VS Code window, SpectiX switches to the exact terminal that session runs in — not just the window.
+
+<p align="center">
+  <img src="docs/media/vscode.gif" width="720" alt="Clicking a session row brings VS Code forward and switches to that session's terminal pane, ringed">
+</p>
+
+### A tap on the shoulder when it needs you
+
+A toast appears when a session finishes or needs you. Press `⌃⌥⌘N` from anywhere to jump to the next one waiting; once you answer, the toast turns into a ✓.
+
+<p align="center">
+  <img src="docs/media/attention.gif" width="720" alt="A needs-you toast slides in, the global hotkey jumps to the terminal waiting on a permission prompt, and the toast turns into a check mark once answered">
+</p>
+
+### Machine load and subscription quota
+
+The header shows how busy this Mac is (CPU and memory — click to open Activity Monitor), plus your Claude and Codex quota for the 5-hour and weekly windows with countdowns to the next reset.
+
+<p align="center">
+  <img src="docs/media/header.gif" width="300" alt="Hovering the header columns: this Mac's CPU and memory load, then Claude and Codex 5-hour and weekly quota with reset countdowns">
+</p>
+
+### Switch accounts without signing in again
+
+Open the Claude or Codex account card to see the accounts you have used, each with its plan and quota. Pick another one and newly opened terminals use it — no new sign-in.
+
+<p align="center">
+  <img src="docs/media/accounts.gif" width="300" alt="Account panel listing remembered Claude accounts with plan and quota bars, switching to another account">
+</p>
+
+### Stats, recent projects and skills
+
+**Stats** shows today's activity — sessions, active time, estimated cost, the week's quota, and token use by day and by hour. **Recent** reopens a project folder in one click. **Skills** lists every Claude and Codex skill and agent with how many times each was used.
+
+<p align="center">
+  <img src="docs/media/tabs.gif" width="300" alt="The Stats, Recent projects and Skills tabs">
+</p>
 
 ## Install
 
