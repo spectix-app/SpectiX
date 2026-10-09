@@ -1685,6 +1685,7 @@ class AppController: NSObject, NSApplicationDelegate {
 
     private func refresh() {
         if Demo.enabled { renderDemo(); return }
+        if demoStageTried { unstageDemoTerminals() }
 
         let t0 = Date()
         if ProcessInfo.processInfo.environment["TB_DEBUG"] != nil {
@@ -2514,14 +2515,155 @@ class AppController: NSObject, NSApplicationDelegate {
     // ProjectHistory remembers cwds for the 最近项目 tab. A fake row has no pane
     // behind it and its cwd doesn't exist, so every one of those would either point
     // at an unrelated window or write invented projects into real state. Demo mode
-    // shows; it doesn't act.
+    // shows; it doesn't act — except toward the Terminal windows it opened itself
+    // (Demo, MARK Staged windows), which get jumps, rings and toasts for real.
     private func renderDemo() {
         Demo.ensureLogs()
+        if !demoStageTried { stageDemoTerminals() }
         rows = Demo.rows()
         usage = Demo.usage()
         model.setEmptyProjects([])
+        notifyDemoTransitions(rows)
         updateButton()
         renderRows()
+    }
+
+    // MARK: Demo staged windows (DEV-only)
+
+    // Once per demo run, even when staging fails (Automation denied): renderDemo runs
+    // every 2.5s and would otherwise retry osascript forever.
+    private var demoStageTried = false
+    // Bumped by every unstage, so a staging round still in flight when demo mode goes
+    // off (or off and on again) closes its own windows instead of publishing them.
+    private var demoStageGen = 0
+    private var demoLastStatus: [String: String] = [:]
+    private let demoQueue = DispatchQueue(label: "spectix.demo-stage")
+
+    private func stageDemoTerminals() {
+        demoStageTried = true
+        let gen = demoStageGen
+        let leftovers = Demo.leftoverStaged()
+        let targets = Demo.stageTargets
+        demoQueue.async { [weak self] in
+            guard let self else { return }
+            leftovers.forEach { self.closeStagedWindow($0) }
+            var made: [String: Demo.Staged] = [:]
+            for fake in targets {
+                // `do script ""` opens a bare shell — nothing typed, so nothing in history.
+                // Title = cwd (repointed by Demo.screen) + process; no device name, no
+                // custom title (it would just repeat the project name).
+                let script = """
+                tell application "Terminal"
+                    set t to do script ""
+                    set w to front window
+                    set title displays device name of t to false
+                    set title displays shell path of t to false
+                    set title displays window size of t to false
+                    set title displays file name of t to false
+                    set title displays custom title of t to false
+                    return (tty of t) & " " & (id of w)
+                end tell
+                """
+                let out = self.spawnResponsibleCapturing(["/usr/bin/osascript", "-e", script]) ?? ""
+                let parts = out.split(separator: " ")
+                guard parts.count == 2, parts[0].hasPrefix("/dev/"), let wid = Int(parts[1]) else {
+                    NSLog("TB demo: staging %@ failed: %@", fake, out)
+                    continue
+                }
+                made[fake] = Demo.Staged(tty: String(parts[0].dropFirst(5)), wid: wid)
+            }
+            // The new shell prints its prompt (user@host) once it starts; paint over it
+            // only after that, or the prompt lands below the mock.
+            Thread.sleep(forTimeInterval: 2)
+            DispatchQueue.main.async {
+                guard gen == self.demoStageGen else {
+                    self.demoQueue.async { made.values.forEach { self.closeStagedWindow($0) } }
+                    return
+                }
+                Demo.staged = made
+                self.refresh()
+            }
+        }
+    }
+
+    private func unstageDemoTerminals() {
+        demoStageTried = false
+        demoStageGen += 1
+        demoLastStatus = [:]
+        let windows = Array(Demo.staged.values)
+        Demo.staged = [:]
+        demoQueue.async { [weak self] in windows.forEach { self?.closeStagedWindow($0) } }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Demo.staged.values.forEach { closeStagedWindow($0) }
+    }
+
+    // The one check behind rule 2's exception: the window id still exists AND its shell
+    // is alive on the tty we opened. A dead shell frees the tty for the next terminal
+    // the user opens, yet its window keeps reporting it — painting would then write
+    // into someone else's terminal.
+    // `is running` first: a `tell` would launch Terminal just to ask.
+    // `live: false` is for closing: a dead-shell window by our id is still ours to close.
+    // Blocks on osascript — off the main thread except at quit.
+    private func stagedWindowIsOurs(_ s: Demo.Staged, live: Bool = true) -> Bool {
+        let script = """
+        if application "Terminal" is running then
+            tell application "Terminal"
+                if exists window id \(s.wid) then
+                    set t to tab 1 of window id \(s.wid)
+                    if \(live ? "(count of processes of t) > 0" : "true") then return tty of t
+                end if
+            end tell
+        end if
+        return ""
+        """
+        return spawnResponsibleCapturing(["/usr/bin/osascript", "-e", script]) == "/dev/\(s.tty)"
+    }
+
+    private func closeStagedWindow(_ s: Demo.Staged) {
+        guard stagedWindowIsOurs(s, live: false) else { return }
+        spawnResponsible(["/usr/bin/osascript", "-e",
+                          "tell application \"Terminal\" to close window id \(s.wid)"])
+    }
+
+    // Repaint the staged window's mock screen for the row's current status.
+    private func paintDemoTerminal(_ row: SessionRow) {
+        guard let s = Demo.stagedWindow(for: row), let text = Demo.screen(for: row) else { return }
+        demoQueue.async { [weak self] in
+            guard let self, self.stagedWindowIsOurs(s) else { return }
+            Self.writeTty(s.tty, text)
+        }
+    }
+
+    private static func writeTty(_ tty: String, _ text: String) {
+        let fd = open("/dev/\(tty)", O_WRONLY | O_NOCTTY)
+        guard fd >= 0 else { return }
+        _ = text.withCString { write(fd, $0, strlen($0)) }
+        close(fd)
+    }
+
+    // The toast half of notifyTransitions, for staged rows only — the rest of that
+    // function (answered-chain, break clock, impact log) acts on real state.
+    private func notifyDemoTransitions(_ rows: [SessionRow]) {
+        let staged = rows.filter { Demo.stagedWindow(for: $0) != nil }
+        for row in staged {
+            let prev = demoLastStatus[row.id]
+            guard prev != row.status else { continue }
+            demoLastStatus[row.id] = row.status
+            paintDemoTerminal(row)
+            guard prev != nil else { continue }
+            if row.status == "needs" || (row.status == "done" && prev == "working") {
+                ToastManager.shared.show(title: row.projectName, subtitle: row.display,
+                                         icon: row.badgeMode, status: row.status,
+                                         path: row.id) { [weak self] in self?.focus(row) }
+            } else if prev == "needs" {
+                ToastManager.shared.resolve(row.id)
+            }
+        }
+        // No retain(live:) here: it also drops any toast whose path's shellPid is dead, and a
+        // demo row's shellPid is invented — every demo toast vanished the instant it showed.
+        // Turning demo off hands back to the real refresh, whose retain sweeps these.
     }
 
     // Push the current rows to every view, with the L("查看", "View") eye overlaid on any
@@ -4706,8 +4848,13 @@ class AppController: NSObject, NSApplicationDelegate {
         // any higher-priority status present pins the pool to it.
         let pool = AppSettings.jumpPriority
             .lazy
-            .map { status in self.rows.filter { $0.status == status && !$0.isFrozen } }
+            .map { status in self.rows.filter {
+                $0.status == status && !$0.isFrozen
+                    && (!Demo.enabled || Demo.stagedWindow(for: $0) != nil || Demo.hasPane($0))
+            } }
             .first { !$0.isEmpty } ?? []
+        // Demo: return-to-origin would raise a real window on an empty pool.
+        if Demo.enabled && pool.isEmpty { return }
         // Diagnostic (T24 "jumps to a running terminal"): pool is strict-bucketed and
         // can never contain a working row, so a landing on a running terminal is either
         // returnToOrigin (pool empty, home was running), a wrong-pane landing in a shared
@@ -5175,8 +5322,39 @@ class AppController: NSObject, NSApplicationDelegate {
     private func focus(_ clicked: SessionRow, via: ImpactKind? = .jumpManual) {
         // A demo row stands for nothing: there is no pane to reveal and no window to
         // raise, so a click would raise whatever editor happens to be running and land
-        // the ring on an unrelated pane. Clicking rows stays harmless instead.
-        if Demo.enabled { return }
+        // the ring on an unrelated pane. Clicking rows stays harmless instead — unless
+        // the row points at a window the demo opened and that window is still it.
+        // No impact log / ack: those write real state.
+        // A VS Code pane the rig opened on the demo's scratch folder (the row already carries
+        // its shell pid, see Demo.panePid): the real editor path below takes it. Never
+        // painted: whatever runs in that pane (often a real claude TUI) stays as is.
+        let demoPane = Demo.enabled && Demo.hasPane(clicked)
+        if Demo.enabled && !demoPane {
+            guard let s = Demo.stagedWindow(for: clicked) else { return }
+            let row = rows.first(where: { $0.id == clicked.id }) ?? clicked
+            // Repainted on every jump too: a resize makes the shell redraw its
+            // user@host prompt under the mock.
+            let text = Demo.screen(for: row)
+            jumpSeq += 1
+            demoQueue.async { [weak self] in
+                guard let self else { return }
+                guard self.stagedWindowIsOurs(s) else {
+                    DispatchQueue.main.async { Demo.staged = Demo.staged.filter { $0.value != s } }
+                    return
+                }
+                if let text { Self.writeTty(s.tty, text) }
+                // By window id, not focusTerminal's tty match: Terminal's closed-shell
+                // windows still report a tty, often the very one the staged window got.
+                self.spawnResponsible(["/usr/bin/osascript", "-e", """
+                    tell application "Terminal"
+                        set index of window id \(s.wid) to 1
+                        activate
+                    end tell
+                    """])
+                DispatchQueue.main.async { self.ringNativeTerminal(row, app: .terminal) }
+            }
+            return
+        }
         // Toast/row click closures capture the row AT RENDER TIME; by click time the
         // status may have moved on (needs→done, done→acked…). Re-resolve the live row
         // so the ring color and ack logic reflect NOW, not the stale snapshot (the
@@ -5440,8 +5618,12 @@ class AppController: NSObject, NSApplicationDelegate {
             """
         }
         spawnResponsible(["/usr/bin/osascript", "-e", script])
-        // Ring the emulator's focused window (= the tab we just raised). The ring poll
-        // retries a few ticks, covering the async gap while osascript brings it front.
+        ringNativeTerminal(row, app: app)
+    }
+
+    // Ring the emulator's focused window (= the tab we just raised). The ring poll
+    // retries a few ticks, covering the async gap while osascript brings it front.
+    private func ringNativeTerminal(_ row: SessionRow, app: TerminalApp) {
         if let appPid = NSRunningApplication.runningApplications(
                 withBundleIdentifier: app.rawValue).first?.processIdentifier {
             TerminalFocusRing.shared.highlightWindow(

@@ -2,17 +2,16 @@
 
 Menu bar status for every Claude Code & Codex session — running, done, waiting for you.
 
-<!-- demo GIF goes here: docs/demo.gif -->
+![Click a session in SpectiX and land in its VS Code terminal pane, ringed](docs/demo.gif)
 
-## What it does
+[Watch the 90-second tour (with sound)](https://spectix.app/assets/spectix-tour.mp4)
 
-SpectiX is a macOS menu bar app that watches every Claude Code and Codex CLI session you have open and shows its state: **working**, **done**, **needs you** (waiting for your approval or answer), or **idle**. Click a session and it jumps to that exact terminal — or that exact pane inside a VS Code window, even when several agents share one window.
+## What does it do?
 
-- Color-coded counts per status in the menu bar
-- One row per session, most urgent first; a toast when a session needs you or finishes
-- The tool step a working session is on right now (`▸ Edit · main.swift`), elapsed time, tokens, context usage
-- Global hotkey `⌃⌥⌘N` jumps to the next session that needs you
-- A focus ring highlights where you landed
+1. **Tells you which tab is ready** — every Claude Code and Codex session, at a glance: working, done, needs you, or idle.
+2. **Jumps you there in one click** — to that exact terminal, even the exact pane inside a VS Code window.
+3. **Taps you on the shoulder** — a toast when a session finishes or needs you; `⌃⌥⌘N` jumps to the next one waiting.
+4. **Shows what each one is up to** — the current step (`▸ Edit · main.swift`), time, tokens, model and context used.
 
 Pure Swift + Cocoa, single binary, no third-party dependencies. macOS 13+.
 

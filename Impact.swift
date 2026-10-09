@@ -57,6 +57,9 @@ enum ImpactLog {
 
     static func log(_ kind: ImpactKind, tty: String? = nil, status: String? = nil,
                     idle: Int? = nil, dwell: Int? = nil, active: Bool? = nil, n: Int? = nil) {
+        // Demo rows can carry a real pid (Demo.panePid), so focus tracking does reach them;
+        // their fake ttys must never land in the real log (T338: 14 lines did, once).
+        guard !Demo.enabled else { return }
         let ev = ImpactEvent(ts: Int(Date().timeIntervalSince1970), kind: kind, tty: tty,
                              status: status, idle: idle, dwell: dwell, active: active, n: n)
         q.async {

@@ -18,6 +18,10 @@ import Cocoa
 //    deliberately skips ring drawing, toasts, auto-jump and ProjectHistory, and
 //    focus() returns early — a fake row has no pane behind it, so pointing at one
 //    would land the highlight on whatever unrelated window happens to be there.
+//    The one exception is a window the demo opened itself (MARK Staged windows): a
+//    Terminal.app row jumps, rings and toasts for real, but only while the window it
+//    points at is verifiably still the one the demo created. Same for a VS Code pane
+//    sitting in the demo's own scratch folder (MARK Staged editor pane).
 //
 // Everything animates off one clock (`elapsed`). Nothing is stored per row, so the
 // world is reproducible: same second since switch-on → same frame.
@@ -136,7 +140,11 @@ enum Demo {
                           isChatPanel: false, isDesktop: false, desktopWid: 0, shellPid: 38104,
                           baseWorkSec: 780, baseTokens: 96_000, ctxLimit: 200_000, ctxGrow: 51_000,
                           tokensPerSec: 70, phase: 61,
-                          beats: [Beat(status: "idle", secs: 26), Beat(status: "working", secs: 40), Beat(status: "done", secs: 30)],
+                          // The only row with a staged window, so it carries both toast
+                          // kinds: a 需确认 to jump to and a 完成 that follows real work.
+                          beats: [Beat(status: "idle", secs: 20), Beat(status: "working", secs: 28),
+                                  Beat(status: "needs", secs: 24), Beat(status: "working", secs: 14),
+                                  Beat(status: "done", secs: 30)],
                           steps: ["Bash · psql -f migrate.sql", "Read · db/schema.sql",
                                   "Edit · db/migrations/0007_uuid.sql"],
                           agents: []))
@@ -169,6 +177,7 @@ enum Demo {
     static func rows() -> [SessionRow] {
         let now = Date().timeIntervalSince1970
         let e = elapsed
+        let pane = panePid()
         return scripts.map { s in
             let cycle = s.cycle
             let p = (e + s.phase).truncatingRemainder(dividingBy: cycle)
@@ -191,7 +200,7 @@ enum Demo {
 
             let folder = (s.cwd as NSString).lastPathComponent
             var r = SessionRow(title: folder, folder: folder, cwd: s.cwd,
-                               shellPid: s.shellPid, tty: s.tty, status: status,
+                               shellPid: s.tty == paneTty ? pane ?? s.shellPid : s.shellPid, tty: staged[s.tty]?.tty ?? s.tty, status: status,
                                taskTitle: s.task, seq: s.seq)
 
             // The clock counts only 运行中 seconds and keeps running across cycles —
@@ -236,6 +245,117 @@ enum Demo {
         }
         // Same fixed ordering the real list uses: position never moves on a status change.
         .sorted { $0.cwd != $1.cwd ? $0.cwd < $1.cwd : $0.seq < $1.seq }
+    }
+
+    // MARK: - Staged windows
+    //
+    // Each row that claims Terminal.app gets a real Terminal window, opened by
+    // AppController when demo mode starts and closed when it stops. The row's tty is
+    // swapped for that window's, so focus() runs the ordinary Terminal jump and the ring
+    // lands on a window the demo owns. The window shows a printed mock of the session,
+    // written straight to the tty — never typed into the shell, so nothing reaches the
+    // user's shell history and no command echo (with its user@host prompt) is filmed.
+
+    struct Staged: Codable, Equatable { let tty: String; let wid: Int }
+
+    /// Fake tty → the window opened for it. Main thread only.
+    static var staged: [String: Staged] = [:] {
+        didSet { try? JSONEncoder().encode(Array(staged.values)).write(to: URL(fileURLWithPath: stagedPath)) }
+    }
+
+    static var stageTargets: [String] { scripts.filter { $0.terminal == .terminal }.map(\.tty) }
+
+    static func stagedWindow(for row: SessionRow) -> Staged? {
+        guard row.terminalApp == .terminal else { return nil }
+        return staged.values.first { $0.tty == row.tty }
+    }
+
+    /// Persisted because the rig quits the app with pkill, which skips willTerminate:
+    /// the next start reads this back to close the windows the killed run left open.
+    /// Beside `dir`, not in it — ensureLogs wipes `dir` before staging reads this.
+    private static var stagedPath: String {
+        (NSTemporaryDirectory() as NSString).appendingPathComponent("spectix-demo-staged.json")
+    }
+
+    static func leftoverStaged() -> [Staged] {
+        guard let d = FileManager.default.contents(atPath: stagedPath) else { return [] }
+        return (try? JSONDecoder().decode([Staged].self, from: d)) ?? []
+    }
+
+    // MARK: - Staged editor pane
+    //
+    // The VS Code counterpart, for aurora-web's first row. The demo doesn't open this
+    // window: tools/readme-shots/shoot-tour.sh opens VS Code on `paneRoot/aurora-web` and
+    // terminals in it. A pane counts only while a live companion-extension host lists its
+    // shell AND that shell's cwd is exactly that scratch folder — no terminal of the
+    // user's sits in there, so focus() can run the real editor jump against it.
+
+    static let paneTty = "ttys004"
+
+    static var paneRoot: String {
+        (NSTemporaryDirectory() as NSString).appendingPathComponent("spectix-demo-panes")
+    }
+
+    static func hasPane(_ row: SessionRow) -> Bool {
+        row.tty == paneTty && panePid() == row.shellPid
+    }
+
+    /// The pane's shell pid, re-proven on every call. A split inherits the cwd, so the
+    /// first-opened terminal (lowest pid) is the pane and the rest are scenery.
+    static func panePid() -> pid_t? {
+        // proc_pidinfo answers with the /private/var spelling of NSTemporaryDirectory().
+        func canon(_ p: String) -> String { p.hasPrefix("/private/") ? String(p.dropFirst(8)) : p }
+        guard let s = scripts.first(where: { $0.tty == paneTty }) else { return nil }
+        let want = canon((paneRoot as NSString).appendingPathComponent((s.cwd as NSString).lastPathComponent))
+        var best: pid_t? = nil
+        for m in CompanionExtension.liveManifests() {
+            for pid in m.shellPids where pid < (best ?? .max) {
+                // A dead pid leaves `v` zeroed: cwd "" never matches.
+                var v = proc_vnodepathinfo()
+                proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &v, Int32(MemoryLayout.size(ofValue: v)))
+                let cwd = withUnsafePointer(to: &v.pvi_cdir.vip_path) {
+                    $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+                }
+                if canon(cwd) == want { best = pid }
+            }
+        }
+        return best
+    }
+
+    /// The staged window's content for this row's current status: a static mock of a
+    /// Claude Code screen. `~/` instead of the real home so no username is filmed.
+    static func screen(for row: SessionRow) -> String? {
+        guard let s = scripts.first(where: { staged[$0.tty]?.tty == row.tty }) else { return nil }
+        let orange = "\u{1B}[38;5;209m", dim = "\u{1B}[2m", bold = "\u{1B}[1m", off = "\u{1B}[0m"
+        let folder = (s.cwd as NSString).lastPathComponent
+        // OSC 7 = "the shell's cwd is …", which Terminal puts in the title bar. The real
+        // cwd is ~, i.e. the user name; point it at a scratch folder named like the project.
+        let cwd = (dir as NSString).appendingPathComponent(folder)
+        try? FileManager.default.createDirectory(atPath: cwd, withIntermediateDirectories: true)
+        var l = ["\u{1B}]7;\(URL(fileURLWithPath: cwd).absoluteString)\u{07}\u{1B}[2J\u{1B}[3J\u{1B}[H",
+                 " \(orange)✻\(off) \(bold)Claude Code\(off) \(dim)· \(s.model)\(off)",
+                 "   \(dim)~/Developer/\(folder)\(off)", "",
+                 " \(dim)>\(off) \(s.task)", ""]
+        for step in s.steps {
+            let parts = step.components(separatedBy: " · ")
+            l.append(" ⏺ \(bold)\(parts[0])\(off)(\(parts.dropFirst().joined()))")
+            l.append("   \(dim)⎿  ok\(off)")
+        }
+        l.append("")
+        switch row.status {
+        case "working":
+            l.append(" \(orange)✻ Working…\(off) \(dim)(esc to interrupt)\(off)")
+        case "needs":
+            let file = s.steps.last.map { ($0.components(separatedBy: " · ").last! as NSString).lastPathComponent } ?? "file"
+            l += [" \(bold)Do you want to make this edit to \(file)?\(off)",
+                  " \(orange)❯ 1. Yes\(off)", "   2. Yes, and don't ask again this session", "   3. No"]
+        case "done":
+            l.append(" ⏺ Done — \(s.task.prefix(1).lowercased() + s.task.dropFirst()).")
+        default:
+            break
+        }
+        l += ["", " \(dim)>\(off) "]
+        return l.joined(separator: "\r\n")
     }
 
     // MARK: - Recent projects
