@@ -16,7 +16,7 @@ mkdir -p "$OUT"
 # tools/panel-preview/stubs.swift stands in for the two symbols it would have provided.
 swiftc -Onone \
   Impact.swift Stats.swift ImpactView.swift \
-  Theme.swift ThemeSpec.swift ThemeRegistry.swift ThemeDefault.swift ThemeClay.swift \
+  Theme.swift ThemeSpec.swift ThemeRegistry.swift ThemeFile.swift ThemeDefault.swift ThemeClay.swift \
   L10n.swift AppSettings.swift Pro.swift Tips.swift \
   tools/panel-preview/stubs.swift tools/panel-preview/main.swift \
   -o "$OUT/render" -framework Cocoa

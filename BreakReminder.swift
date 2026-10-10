@@ -20,7 +20,7 @@ import Cocoa
 //
 // Walking away is still a break even if you never pressed the button: the presence
 // rules from v1 stay (no input for 5 min with nothing running, or 20 min with a turn
-// running, or the Mac slept) and drop the clock to idle. This is not about Claude's
+// running, or the Mac slept) and start an inferred rest. This is not about Claude's
 // work time (SessionClock in Stats.swift); it is about the human.
 final class BreakReminder {
     static let shared = BreakReminder()
@@ -72,10 +72,13 @@ final class BreakReminder {
     var autoShowPending = false
     var dismissed = false
 
-    private let todayKeyKey = "breakTodayKey"
-    private let todaySecKey = "breakTodaySec"
-    private var todayKey: String
-    private var todaySec: Int
+    /// Seconds worked per local day ("yyyy-MM-dd"), closed stretches only — the live
+    /// stretch is added on read. A stretch over midnight is split between the two days.
+    private let daySecKey = "breakDaySec"
+    private var daySec: [String: Int]
+    /// The running clock, saved so quitting / relaunching resumes it instead of starting
+    /// over: every reading is derived from these dates, so restoring them IS resuming.
+    private let stateKey = "breakState"
 
     /// Posted once a second while a clock runs, so the chip and the strip tick by the
     /// second instead of by the 2.5s refresh. `.common` so dragging a window doesn't
@@ -87,8 +90,9 @@ final class BreakReminder {
     private var ticker: Timer?
 
     private init() {
-        todayKey = UserDefaults.standard.string(forKey: todayKeyKey) ?? ""
-        todaySec = UserDefaults.standard.integer(forKey: todaySecKey)
+        daySec = UserDefaults.standard.dictionary(forKey: daySecKey) as? [String: Int] ?? [:]
+        migrateTodaySec()
+        restore()
         let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.phase != .idle || self.restedSec != nil else { return }
             NotificationCenter.default.post(name: Self.tick, object: nil)
@@ -149,7 +153,35 @@ final class BreakReminder {
     }
 
     /// Everything worked today: closed stretches + the live one.
-    var todayTotalSec: Int { todaySec + streakSec() }
+    var todayTotalSec: Int { workedSec(on: Date()) }
+
+    /// Every day on the ledger, keyed by the day's start (epoch), today's live stretch included.
+    func dailyWorkSec() -> [Int: Int] {
+        let cal = Calendar.current
+        var out: [Int: Int] = [:]
+        for key in daySec.keys {
+            let p = key.split(separator: "-").compactMap { Int($0) }
+            guard p.count == 3, let d = cal.date(from: DateComponents(year: p[0], month: p[1], day: p[2])) else { continue }
+            out[Int(d.timeIntervalSince1970)] = workedSec(on: d)
+        }
+        // The live stretch may have started before midnight, on a day not booked yet.
+        for d in [workStart, Date()].compactMap({ $0 }) {
+            out[Int(cal.startOfDay(for: d).timeIntervalSince1970)] = workedSec(on: d)
+        }
+        return out
+    }
+
+    /// Seconds worked on the local day containing `day`, the live stretch included.
+    func workedSec(on day: Date, now: Date = Date()) -> Int {
+        let cal = Calendar.current
+        var sec = daySec[Self.dayKey(day)] ?? 0
+        if phase == .working || phase == .overtime, let s = workStart {
+            let lo = max(s, cal.startOfDay(for: day))
+            let hi = min(now, cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: day)) ?? now)
+            sec += max(0, Int(hi.timeIntervalSince(lo)))
+        }
+        return sec
+    }
 
     // MARK: transitions (user / AI)
 
@@ -158,7 +190,7 @@ final class BreakReminder {
     func noteActivity(now: Date = Date()) {
         lastPresent = now
         let open = phase == .idle || (phase == .resting && restAuto)
-        if open, AppSettings.breakReminderEnabled { startWork(now: now) }
+        if open, AppSettings.breakReminderEnabled { startWork(now: now) } else { save() }
     }
 
     func startWork(now: Date = Date()) {
@@ -175,6 +207,7 @@ final class BreakReminder {
         restAuto = false
         lastPresent = now
         everStarted = true
+        save()
     }
 
     func startRest(now: Date = Date(), auto: Bool = false) {
@@ -184,6 +217,7 @@ final class BreakReminder {
         restAuto = auto
         heldBanner = nil
         autoShowPending = false
+        save()
         NotificationCenter.default.post(name: Self.restStarted, object: nil)
     }
 
@@ -197,6 +231,7 @@ final class BreakReminder {
         reminded = 0
         dismissed = false
         autoShowPending = false
+        save()
     }
 
     /// A new rest length while resting — the end moves with it; a length already
@@ -215,6 +250,7 @@ final class BreakReminder {
         if phase == .overtime, let d = deadline, d > now { phase = .working }
         dismissed = false
         autoShowPending = false
+        save()
         return true
     }
 
@@ -228,7 +264,6 @@ final class BreakReminder {
     /// work"), `busy` = anything that means this is a bad moment to be told to stand up:
     /// a run in flight OR a prompt waiting on you. Returns an event to announce.
     func poll(idle: TimeInterval, running: Bool, busy: Bool = false, now: Date = Date()) -> Event? {
-        rollDay(now)
         // Polls stop while the Mac sleeps, and the keystroke that wakes it resets the
         // idle reading — a closed lid would otherwise read as "never left".
         let slept = now.timeIntervalSince(lastPoll) > gap && lastPoll != .distantPast
@@ -245,6 +280,9 @@ final class BreakReminder {
             if slept { startRest(now: lastPresent, auto: true); return nil }
             guard present else { startRest(now: now.addingTimeInterval(-idle), auto: true); return nil }
             lastPresent = now
+            // Every poll: `rr` quits with SIGTERM, so there is no willTerminate to save on,
+            // and a stale lastPresent turns a 4-minute relaunch into an inferred rest.
+            save()
             guard let left = remainingSec(now: now) else { return nil }
             if left <= 0 {
                 if phase == .working { phase = .overtime }
@@ -270,7 +308,7 @@ final class BreakReminder {
             }
             return nil
         case .resting:
-            if let r = restEnd, now >= r { phase = .idle; return .restEnded }
+            if let r = restEnd, now >= r { phase = .idle; save(); return .restEnded }
             return nil
         case .idle:
             // Lenient first start: the app came up with a turn already running — you
@@ -281,30 +319,88 @@ final class BreakReminder {
     }
 
     private func closeStretch(at: Date) {
-        if let s = workStart { todaySec += max(0, Int(at.timeIntervalSince(s))) }
+        if let s = workStart { credit(from: s, to: at) }
         workStart = nil
         extraSec = 0
         extended = false
         reminded = 0
-        persist()
     }
 
-    private func rollDay(_ now: Date) {
-        let key = Self.dayKey(now)
-        guard key != todayKey else { return }
-        todayKey = key
-        todaySec = 0
-        persist()
+    /// Book [from, to) into daySec, cut at each midnight it crosses.
+    private func credit(from: Date, to: Date) {
+        let cal = Calendar.current
+        var lo = from
+        while lo < to {
+            let next = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: lo)) ?? to
+            let hi = min(next, to)
+            daySec[Self.dayKey(lo), default: 0] += Int(hi.timeIntervalSince(lo))
+            lo = hi
+        }
+        UserDefaults.standard.set(daySec, forKey: daySecKey)
     }
 
-    private func persist() {
-        UserDefaults.standard.set(todayKey, forKey: todayKeyKey)
-        UserDefaults.standard.set(todaySec, forKey: todaySecKey)
+    // MARK: persistence
+
+    private func save() {
+        var d: [String: Any] = [
+            "phase": "\(phase)", "extraSec": extraSec, "extended": extended,
+            "reminded": reminded, "restAuto": restAuto, "dismissed": dismissed,
+            "lastPresent": lastPresent.timeIntervalSince1970,
+        ]
+        if let s = workStart { d["workStart"] = s.timeIntervalSince1970 }
+        if let r = restStart { d["restStart"] = r.timeIntervalSince1970 }
+        // Held with `reminded` already bumped: dropping it would skip this reminder.
+        if let h = heldBanner { d["heldSec"] = h.sec; d["heldSince"] = h.since.timeIntervalSince1970 }
+        UserDefaults.standard.set(d, forKey: stateKey)
+    }
+
+    /// ★ Resume, don't restart. The app being closed is treated exactly like the Mac
+    /// sleeping: `lastPoll` is set to the last moment you were seen, so if that is more
+    /// than `gap` ago the first poll turns the round into a rest dated from then — the
+    /// closed time is not counted as work, and a rest that has already run its length
+    /// lands on 休息好了？. A quick relaunch just carries on (overtime included, with
+    /// `reminded` restored so the banner does not fire twice).
+    private func restore() {
+        guard let d = UserDefaults.standard.dictionary(forKey: stateKey),
+              let name = d["phase"] as? String,
+              let p = [Phase.idle, .working, .overtime, .resting].first(where: { "\($0)" == name })
+        else { return }
+        let date = { (k: String) in (d[k] as? Double).map { Date(timeIntervalSince1970: $0) } }
+        let ws = date("workStart"), rs = date("restStart")
+        if (p == .working || p == .overtime) && ws == nil { return }
+        if p == .resting && rs == nil { return }
+        phase = p
+        workStart = ws
+        restStart = rs
+        extraSec = d["extraSec"] as? Int ?? 0
+        extended = d["extended"] as? Bool ?? false
+        reminded = d["reminded"] as? Int ?? 0
+        restAuto = d["restAuto"] as? Bool ?? false
+        dismissed = d["dismissed"] as? Bool ?? false
+        if let sec = d["heldSec"] as? Int, let since = date("heldSince") { heldBanner = (sec, since) }
+        lastPresent = date("lastPresent") ?? .distantPast
+        lastPoll = lastPresent
+        // Same day: this is a relaunch, not a new morning — no lenient auto-start.
+        everStarted = lastPresent != .distantPast && Self.dayKey(lastPresent) == Self.dayKey(Date())
+    }
+
+    /// Before the per-day map there was one counter for "today" under the old keys.
+    private func migrateTodaySec() {
+        let ud = UserDefaults.standard
+        guard let key = ud.string(forKey: "breakTodayKey") else { return }
+        // Old key is unpadded "2026-10-9"; the total belongs to that day, whichever it was.
+        let ymd = key.split(separator: "-").compactMap { Int($0) }
+        if ymd.count == 3 {
+            daySec[String(format: "%04d-%02d-%02d", ymd[0], ymd[1], ymd[2]), default: 0] += ud.integer(forKey: "breakTodaySec")
+            ud.set(daySec, forKey: daySecKey)
+        }
+        ud.removeObject(forKey: "breakTodayKey")
+        ud.removeObject(forKey: "breakTodaySec")
     }
 
     private static func dayKey(_ d: Date) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
-        return "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     /// "1h05m" / "48m" — for totals.

@@ -1679,7 +1679,7 @@ private final class TrendChart: NSView {
         let bx = min(max(cx - w / 2, 0), max(0, bounds.width - w))
         let box = NSRect(x: bx, y: plot.maxY - h, width: w, height: h)
         let back = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
-        NeonInk.bed.withAlphaComponent(0.96).setFill()
+        NeonInk.bed(in: self).withAlphaComponent(0.96).setFill()
         back.fill()
         primary.withAlphaComponent(0.45).setStroke()
         back.lineWidth = 1
@@ -1704,13 +1704,10 @@ private class NeonSurface: NSView {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
                                 xRadius: radius, yRadius: radius)
 
-        // The card always lays its own bed, in both appearances. Borrowing the window's
-        // meant the card was near-black under a dark appearance and a distinct surface
-        // under a light one — the same card, two different objects. Now it is one
-        // colour everywhere: it lifts off the window in the dark and sinks into it in
-        // the light, and the accents have the same thing to glow against either way.
-        // See the note on NeonInk for why this also decides the text colour on top.
-        NeonInk.bed.setFill()
+        // The card always lays its own bed, in both appearances — dark in both, so the
+        // accents always have something to glow against. See the note on NeonInk for why
+        // this also decides the text colour on top.
+        NeonInk.bed(in: self).setFill()
         path.fill()
 
         // The resting wash IS what the hover state used to be — the old resting value was
@@ -1919,6 +1916,8 @@ enum ImpactFormat {
         case .streak:  return L("连续", "Streak")
         case .auto:    return L("托管", "Auto")
         case .control: return L("掌控", "Control")
+        case .work:    return L("工作", "Work")
+        case .tokens:  return L("消耗", "Tokens")
         }
     }
 
@@ -1933,6 +1932,8 @@ enum ImpactFormat {
         case .streak:  names = ["flame.fill"]
         case .auto:    names = ["bolt.fill"]
         case .control: names = ["chart.bar.fill"]
+        case .work:    names = ["laptopcomputer"]
+        case .tokens:  names = ["circle.hexagongrid.fill", "circle.grid.3x3.fill"]
         }
         let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         for n in names {
@@ -1979,6 +1980,10 @@ enum ImpactFormat {
         case .control:
             num("\(v)")
             unit(L("线 · \(w.control.stranded) 漏", "live · \(w.control.stranded) missed"))
+        case .work:
+            num(hm(v))
+        case .tokens:
+            num(Tok.fmt(v))
         }
         return out
     }
@@ -2024,6 +2029,8 @@ enum ImpactFormat {
         case .streak:        return L("\(v) 天", "\(v)d")
         case .auto:          return L("\(v) 次", "\(v)")
         case .control:       return L("\(v) 线", "\(v)")
+        case .work:          return hm(v)
+        case .tokens:        return Tok.fmt(v)
         }
     }
 
@@ -2084,6 +2091,14 @@ enum ImpactFormat {
                   "\(missed) of them sat unanswered for over 10 minutes")
                 t("。", ".")
             }
+        case .work:
+            t("你自己", "How long ")
+            b("坐在电脑前干活", "you yourself were at it")
+            t("的时间 —— 量的是人，不是 Claude。", " — the person, not Claude.")
+        case .tokens:
+            t("所有会话", "Tokens every session ")
+            b("一共消耗的 token", "burned between them")
+            t("，包括缓存读写。", ", cache reads and writes included.")
         }
         return out
     }
@@ -2135,6 +2150,12 @@ enum ImpactFormat {
                     (L("常态（P75）", "Everyday level (P75)"), L("\(c.p75) 线", "\(c.p75)")),
                     (L("被晾超 10 分钟", "Left over 10 minutes"),
                      L("\(c.stranded) 个 / \(c.scored) 个计分", "\(c.stranded) of \(c.scored) scored"))]
+        case .work, .tokens:
+            let v = w.metric(m)
+            let f: (Int) -> String = m == .work ? { hm($0) } : { Tok.fmt($0) }
+            return [(L("\(w.range.impactNoun)", "This period"), f(v.value)),
+                    (L("上一期", "Previous period"), w.comparable ? f(v.previous) : "—"),
+                    (L("最佳一期", "Best period"), w.comparable && v.best > 0 ? f(v.best) : "—")]
         }
     }
 
@@ -2178,6 +2199,15 @@ enum ImpactFormat {
             b("在电脑前", "at the machine")
             t("时计遗漏 —— 你去吃饭时会话就绪，不算你的。",
               " — a session going quiet while you are at lunch is not yours to miss.")
+        case .work:
+            t("就是番茄计时走过的时间：", "The time the 🍅 clock ran: ")
+            b("离开 5 分钟就停表", "it stops once you are away 5 minutes")
+            t("（有会话在跑时 20 分钟），App 关着的时间不算。",
+              " (20 with a session running), and time with the app closed does not count.")
+        case .tokens:
+            t("每轮结束时从会话记录里读出来的，", "Read from each turn's transcript when it ends — ")
+            b("和下面用量里的 token 是同一个数", "the same figure as the token usage below")
+            t("。", ".")
         }
         return out
     }
@@ -2675,11 +2705,19 @@ private func resolvedSRGB(_ c: NSColor) -> NSColor { c.usingColorSpace(.sRGB) ??
 // the WINDOW, not on a card, so it cannot darken its own background and instead swaps
 // its glow for an outline on light. Two different beds, two different recipes.)
 enum NeonInk {
-    /// The bed every neon surface paints under itself, in BOTH appearances. Dark enough
+    /// The bed every neon surface paints under itself on a LIGHT appearance. Dark enough
     /// that the accents still glow against it, light enough to read as a surface rather
-    /// than a hole — and the same colour either way, so the card looks like one object
-    /// instead of two designs that happen to share a layout.
+    /// than a hole.
     static let bed = NSColor(srgbRed: 0.478, green: 0.514, blue: 0.569, alpha: 1)
+    /// On a dark appearance the light bed sat far brighter than the window and read as a
+    /// washed-out grey slab (2026-10-10 user report). Ink, a hair above the window and
+    /// faintly blue, picked from four renders (design/impact-dark-bed.html). The ink
+    /// alphas below stay as they are: pale text only gains contrast on a darker bed.
+    static let darkBed = NSColor(srgbRed: 0.105, green: 0.118, blue: 0.149, alpha: 1)
+
+    static func bed(in view: NSView) -> NSColor {
+        view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? darkBed : bed
+    }
 
     // The alphas below are tuned TO that bed and have to move with it: a paler bed eats
     // low-alpha white, so every step was lifted when the bed was. This is close to the

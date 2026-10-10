@@ -12,7 +12,6 @@ import Cocoa
 //                 each with a "vs 上一期" delta line
 //   本周配额消耗 — one segmented bar splitting the week's quota across its days
 //   每日 Token   — a 26-week contribution grid with weekday + date axes
-//   按小时 Token — a token histogram whose columns track the range (hours/days/months)
 //   分布        — percentage bars ranked by token usage, flippable day / project /
 //                 model / task
 //
@@ -79,8 +78,6 @@ final class StatsPane: NSView {
     private let timeSub = StatsPane.subCaption()
     private let costSub = StatsPane.subCaption()
 
-    private let hourTitle = StatsPane.sectionLabel(L("按小时 Token", "Tokens by hour"))
-    private let peakBars = BarsView()
     private let heatmap = HeatmapView()
 
     // 本周配额消耗 — one horizontal bar split into per-day segments (+ a remainder
@@ -233,12 +230,6 @@ final class StatsPane: NSView {
         heatmap.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(heatmap)
 
-        // 按小时活动.
-        doc.addSubview(hourTitle)
-        peakBars.accent = Status.accent("working")
-        peakBars.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(peakBars)
-
         // 分布.
         let distLabel = Self.sectionLabel(L("分布", "Distribution"))
         doc.addSubview(distLabel)
@@ -327,15 +318,8 @@ final class StatsPane: NSView {
             heatmap.topAnchor.constraint(equalTo: heatTitle.bottomAnchor, constant: 8),
             heatmap.heightAnchor.constraint(equalToConstant: 130),
 
-            hourTitle.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            hourTitle.topAnchor.constraint(equalTo: heatmap.bottomAnchor, constant: 16),
-            peakBars.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            peakBars.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
-            peakBars.topAnchor.constraint(equalTo: hourTitle.bottomAnchor, constant: 8),
-            peakBars.heightAnchor.constraint(equalToConstant: 68),
-
             distLabel.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            distLabel.topAnchor.constraint(equalTo: peakBars.bottomAnchor, constant: 16),
+            distLabel.topAnchor.constraint(equalTo: heatmap.bottomAnchor, constant: 16),
             distCap.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
             distCap.leadingAnchor.constraint(greaterThanOrEqualTo: distLabel.trailingAnchor, constant: 8),
             distCap.firstBaselineAnchor.constraint(equalTo: distLabel.firstBaselineAnchor),
@@ -367,11 +351,12 @@ final class StatsPane: NSView {
         rebuildList()
     }
 
-    // Repaint every range-scoped number, plus heatmap / hour bars / distribution.
+    // Repaint every range-scoped number, plus heatmap / distribution.
     private func applyRange() {
         // 连续 is "did you run anything at all today", which lives in the usage log — so
         // the impact rollup borrows it rather than parsing the same file a second time.
-        let imp = impact.impact(range: range, usage: store.events)
+        let work = Demo.enabled ? Demo.dailyWorkSec() : BreakReminder.shared.dailyWorkSec()
+        let imp = impact.impact(range: range, usage: store.events, work: work)
         // The rate series comes from the USAGE log, not the impact log: tokens and the
         // heartbeat that reveals a live terminal are both written by the hook, so one
         // pass over one file answers both curves.
@@ -390,14 +375,6 @@ final class StatsPane: NSView {
         costV.stringValue = t.costUSD > 0 ? Self.fmtUSD(t.costUSD) : "—"
         costSub.stringValue = Self.tokenSummary(t)
 
-        let actName: String
-        switch range {
-        case .today: actName = L("按小时 Token", "Tokens by hour")
-        case .week, .month: actName = L("按天 Token", "Tokens by day")
-        case .all: actName = L("按月 Token", "Tokens by month")
-        }
-        hourTitle.stringValue = L("\(actName)（\(range.label)）", "\(actName) (\(range.label))")
-        peakBars.bars = store.activity(range)
         heatmap.days = store.heatmap(days: 26 * 7)
         updateQuotaBar()
         rebuildList()
@@ -699,76 +676,8 @@ final class StatsPane: NSView {
 
 // MARK: - Mini charts
 
-// An activity histogram with an axis beneath; the tallest bar is highlighted, and
-// hovering a column brightens it and floats its tip bubble — hand-rolled via
-// NSTrackingArea because NSToolTip's dwell tooltips never fire in this window. The
-// column granularity (hours / days / months) is decided upstream; each bar carries
-// its own axis tick and tip so this view stays agnostic to what a column means.
-private final class BarsView: NSView {
-    var bars: [ActivityBar] = [] { didSet { hoverIndex = nil; needsDisplay = true } }
-    var accent: NSColor = Status.accent("working")
-    private let labelH: CGFloat = 14
-    private var hoverIndex: Int? { didSet { if hoverIndex != oldValue { needsDisplay = true } } }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.filter { $0.owner === self }.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(
-            rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
-            owner: self))
-    }
-    override func mouseMoved(with event: NSEvent) {
-        hoverIndex = barIndex(at: convert(event.locationInWindow, from: nil))
-    }
-    override func mouseExited(with event: NSEvent) { hoverIndex = nil }
-
-    // Full-height hit zone per column, so thin/empty bars are easy to hit.
-    private func barIndex(at p: NSPoint) -> Int? {
-        guard !bars.isEmpty, bounds.width > 0, p.x >= 0, p.y >= 0 else { return nil }
-        let n = bars.count
-        let gap: CGFloat = 3
-        let bw = max(1, (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n))
-        let i = Int(p.x / (bw + gap))
-        return bars.indices.contains(i) ? i : nil
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard !bars.isEmpty else { return }
-        let maxV = CGFloat(max(bars.map { $0.value }.max() ?? 1, 1))
-        let n = bars.count
-        let gap: CGFloat = 3
-        let bw = max(1, (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n))
-        let chartH = bounds.height - labelH
-        for (i, bar) in bars.enumerated() {
-            let v = bar.value
-            let h = v > 0 ? max(2, chartH * CGFloat(v) / maxV) : 0
-            if h == 0 { continue }
-            let x = CGFloat(i) * (bw + gap)
-            let rect = NSRect(x: x, y: labelH, width: bw, height: h)
-            let path = NSBezierPath(roundedRect: rect, xRadius: min(bw, 3) / 2, yRadius: min(bw, 3) / 2)
-            let base = CGFloat(v) == maxV ? accent : accent.withAlphaComponent(0.38)
-            (i == hoverIndex ? accent : base).setFill()
-            path.fill()
-        }
-        // Axis: draw each bar's own tick label (nil ticks stay blank).
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(9, .regular), .foregroundColor: NSColor.tertiaryLabelColor]
-        for (i, bar) in bars.enumerated() {
-            guard let tick = bar.tick else { continue }
-            let x = CGFloat(i) * (bw + gap)
-            (tick as NSString).draw(at: NSPoint(x: x, y: 0), withAttributes: attrs)
-        }
-        // Hover: float the pointed column's tip bubble above it.
-        if let i = hoverIndex, bars.indices.contains(i) {
-            let colX = CGFloat(i) * (bw + gap) + bw / 2
-            HoverBubble.draw(text: bars[i].tip, centerX: colX, topY: bounds.height, in: self)
-        }
-    }
-}
-
 // A compact single-line readout bubble drawn in-view on hover (NSToolTip's dwell
-// tooltips don't fire in this window). Shared by the hour histogram and the
-// distribution rows so both read as one hover language.
+// tooltips don't fire in this window). Used by the distribution rows.
 private enum HoverBubble {
     static let padX: CGFloat = 7, padY: CGFloat = 4
     static func size(text: String) -> NSSize {

@@ -178,6 +178,7 @@ enum Pricing {
 enum Tok {
     static func fmt(_ n: Int) -> String {
         switch n {
+        case 1_000_000_000...: return String(format: "%.1fB", Double(n) / 1_000_000_000)
         case 1_000_000...: return String(format: "%.1fM", Double(n) / 1_000_000)
         case 1_000...:     return String(format: "%.1fk", Double(n) / 1_000)
         default:           return "\(n)"
@@ -288,15 +289,6 @@ struct StatBucket {
     // window can show both a total and an average.
     var durSec = 0
     var pairedTasks = 0
-}
-
-// One column of the activity histogram: the tokens consumed in that slot, the axis
-// tick to draw beneath it (nil = un-labelled, so dense ranges don't crowd the axis),
-// and the hover tip.
-struct ActivityBar {
-    let value: Int
-    let tick: String?
-    let tip: String
 }
 
 // One point on the fine-grained rate series — one bucket of `TimeRange.rateBucket`
@@ -487,79 +479,6 @@ final class StatsStore {
         return out.sorted { $0.ts > $1.ts }
     }
 
-    // Token consumption bucketed by time slot, for the histogram under the heatmap.
-    // The x-granularity tracks the range: hours for 今日, weekdays for 本周, calendar
-    // days for 本月, calendar months for 全部. Bar height is tokens, not event count —
-    // ten trivial turns should not out-weigh one that burned a megatoken. Each bar
-    // carries its own axis tick (nil = un-labelled) and hover tip so BarsView stays
-    // dumb about what a column means.
-    func activity(_ r: TimeRange) -> [ActivityBar] {
-        let cal = Calendar.current
-        let evs = filtered(r)
-        func date(_ e: UsageEvent) -> Date { Date(timeIntervalSince1970: TimeInterval(e.ts)) }
-
-        switch r {
-        case .today:
-            var b = [Int](repeating: 0, count: 24)
-            for e in evs { let h = cal.component(.hour, from: date(e)); if (0..<24).contains(h) { b[h] += Tok.total(e) } }
-            return b.indices.map { i in
-                ActivityBar(value: b[i], tick: i % 4 == 0 ? "\(i)" : nil,
-                            tip: tip(b[i], cn: "\(i) 时", en: "\(i):00"))
-            }
-
-        case .week:
-            let start = Date(timeIntervalSince1970: TimeInterval(r.lowerBound()))
-            var b = [Int](repeating: 0, count: 7)
-            for e in evs {
-                let d = cal.dateComponents([.day], from: cal.startOfDay(for: start),
-                                           to: cal.startOfDay(for: date(e))).day ?? -1
-                if (0..<7).contains(d) { b[d] += Tok.total(e) }
-            }
-            let cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-            let en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            return b.indices.map { i in
-                ActivityBar(value: b[i], tick: L(cn[i], en[i]), tip: tip(b[i], cn: cn[i], en: en[i]))
-            }
-
-        case .month:
-            let start = Date(timeIntervalSince1970: TimeInterval(r.lowerBound()))
-            let days = cal.range(of: .day, in: .month, for: start)?.count ?? 30
-            var b = [Int](repeating: 0, count: days)
-            for e in evs { let d = cal.component(.day, from: date(e)) - 1; if (0..<days).contains(d) { b[d] += Tok.total(e) } }
-            return b.indices.map { i in
-                let day = i + 1
-                return ActivityBar(value: b[i], tick: (day == 1 || day % 5 == 0) ? "\(day)" : nil,
-                                   tip: tip(b[i], cn: "\(day) 日", en: "day \(day)"))
-            }
-
-        case .all:
-            guard let first = events.map({ $0.ts }).min() else { return [] }
-            func monthStart(_ d: Date) -> Date {
-                cal.date(from: cal.dateComponents([.year, .month], from: d)) ?? d
-            }
-            let startM = monthStart(Date(timeIntervalSince1970: TimeInterval(first)))
-            let nowM = monthStart(Date())
-            var months: [Date] = []
-            var m = startM
-            while m <= nowM, months.count < 240 {
-                months.append(m)
-                m = cal.date(byAdding: .month, value: 1, to: m) ?? nowM.addingTimeInterval(86_400)
-            }
-            func key(_ d: Date) -> String {
-                String(format: "%04d-%02d", cal.component(.year, from: d), cal.component(.month, from: d))
-            }
-            var counts: [String: Int] = [:]
-            for e in events { counts[key(date(e)), default: 0] += Tok.total(e) }
-            let every = max(1, months.count / 6)
-            return months.enumerated().map { i, d in
-                let y = cal.component(.year, from: d), mo = cal.component(.month, from: d)
-                return ActivityBar(value: counts[key(d)] ?? 0,
-                                   tick: i % every == 0 ? L("\(mo)月", "\(mo)/\(y % 100)") : nil,
-                                   tip: tip(counts[key(d)] ?? 0, cn: "\(y)年\(mo)月", en: key(d)))
-            }
-        }
-    }
-
     // MARK: Fine-grained rate series (改这块前先读下面这段)
     //
     // Two curves over the same buckets: how fast tokens were burned, and how many
@@ -659,12 +578,6 @@ final class StatsStore {
 
     private func add(_ p: inout RatePoint, _ tok: Double, auto: Bool) {
         if auto { p.autoTok += tok } else { p.manualTok += tok }
-    }
-
-    // "<when> · 1.2M tokens" or "<when> · 无用量" — the hover readout for one bar.
-    private func tip(_ n: Int, cn: String, en: String) -> String {
-        n > 0 ? L("\(cn) · \(Tok.fmt(n)) tokens", "\(en) · \(Tok.fmt(n)) tokens")
-              : L("\(cn) · 无用量", "\(en) · no usage")
     }
 
     // MARK: Global (range-independent) views

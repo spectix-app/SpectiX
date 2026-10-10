@@ -99,7 +99,7 @@ final class MenuPopoverController: NSViewController {
         warnButton.widthAnchor.constraint(equalToConstant: 38).isActive = true
 
         mainButton = makeEntry("macwindow", L("主界面", "Home"), #selector(openWindow), L("打开主界面 · 会话", "Open home · Sessions"))
-        let statsEntry = makeEntry("chart.bar", L("统计", "Stats"), #selector(statsClicked), L("统计（任务 / 决定）", "Stats (tasks / decisions)"))
+        let statsEntry = makeEntry("chart.bar", L("回顾", "Insights"), #selector(statsClicked), L("回顾（效能 / 用量 / 工作时长）", "Insights (impact / usage / your hours)"))
         let recentEntry = makeEntry("clock.arrow.circlepath", L("最近项目", "Recent"), #selector(recentClicked), L("最近项目", "Recent"))
         let settingsEntry = makeEntry("gearshape", L("设置", "Settings"), #selector(settingsClicked), L("设置（快捷键）", "Settings (hotkeys)"))
 

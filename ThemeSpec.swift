@@ -9,7 +9,8 @@ import Cocoa
 // switches — they still say `Theme.cardFill`, it just resolves differently now.
 //
 // Adding a theme = one new file under `Themes/` returning a `ThemeSpec`, plus one
-// line in `ThemeRegistry.all`. No consumer changes. The handful of things that are
+// line in `ThemeRegistry.builtIns` — or, without rebuilding, a JSON file that
+// overrides a built-in's colors (ThemeFile.swift). No consumer changes. The handful of things that are
 // genuinely *behavioural* rather than numeric (does this material need a blur
 // layer? is a surface bounded by a line or by light?) are expressed as small enums
 // below, so a new theme normally picks an existing case and just fills in values.
@@ -159,57 +160,57 @@ enum TintStyle {
 // MARK: Value groups
 
 struct ThemePalette {
-    let baseFill: NSColor
-    let cardFill: NSColor
-    let cardFillHover: NSColor
-    let cardFloat: NSColor
-    let hairline: NSColor
-    let hairlineHover: NSColor
-    let divider: NSColor
-    let barTrack: NSColor
+    var baseFill: NSColor
+    var cardFill: NSColor
+    var cardFillHover: NSColor
+    var cardFloat: NSColor
+    var hairline: NSColor
+    var hairlineHover: NSColor
+    var divider: NSColor
+    var barTrack: NSColor
 
     // The agent dimension — orthogonal to session status, so it is NOT part of
     // `ThemeStatusPalette` and never participates in the user's status-color
     // overrides (docs/design-system.md).
-    let agentAccent: NSColor
-    let agentDeep: NSColor
-    let agentManagerAccent: NSColor
-    let agentNeutralAccent: NSColor
+    var agentAccent: NSColor
+    var agentDeep: NSColor
+    var agentManagerAccent: NSColor
+    var agentNeutralAccent: NSColor
     /// The 命令标记 (`bash` / `shell`) tag beside the title. Its own hue rather than a
     /// status color: the tag rides the same edge as the status pill and appears on
     /// working AND done rows, so borrowing `Status.accent` would either duplicate the
     /// pill or contradict it (docs/row-display.md 「命令标记」).
-    let shellTagAccent: NSColor
+    var shellTagAccent: NSColor
     /// Resting fill of an expanded agent sublist — REPLACES `cardFill` on those
     /// slices (a layer has one backgroundColor), so it must land as bright as
     /// `cardFill` while reading clearly iris (docs/row-display.md, 方案 16).
-    let agentSegmentFill: NSColor
+    var agentSegmentFill: NSColor
     /// The one iris hairline that opens the segment; nodes inside keep `divider`.
-    let agentSeam: NSColor
+    var agentSeam: NSColor
 
     /// The paid-tier dimension. Like the agent iris this is orthogonal to session
     /// status, so it stays out of `ThemeStatusPalette` and never participates in the
     /// user's status-color overrides. Amber because nothing else in the palette
     /// claims it and "premium" reads gold. Only ONE tone is stored — the locked
     /// badge's solid bed derives from it via `deepenedForWhiteText()`.
-    let proAccent: NSColor
+    var proAccent: NSColor
 
     // Usage-line metric hues. Attributes of a session, never states.
-    let claudeOrange: NSColor
-    let usageGreen: NSColor
-    let modelOpus: NSColor
-    let modelSonnet: NSColor
-    let modelHaiku: NSColor
+    var claudeOrange: NSColor
+    var usageGreen: NSColor
+    var modelOpus: NSColor
+    var modelSonnet: NSColor
+    var modelHaiku: NSColor
 }
 
 /// Corner radii only. Spacing and row heights are intentionally absent — see the
 /// "looks vs fits" note at the top of this file.
 struct ThemeMetrics {
-    let card: CGFloat
-    let group: CGFloat
-    let chip: CGFloat
-    let windowRadius: CGFloat
-    let popoverRadius: CGFloat
+    var card: CGFloat
+    var group: CGFloat
+    var chip: CGFloat
+    var windowRadius: CGFloat
+    var popoverRadius: CGFloat
 }
 
 /// The seven session-status defaults a theme ships. A user override still wins over
@@ -218,8 +219,8 @@ struct ThemeMetrics {
 struct ThemeStatusPalette {
     // `await` is backticked because a bare `return await` parses as the await
     // operator and fails to compile; the argument label needs no escape.
-    let needs, working, checking, paused, `await`, done, idle: NSColor
-    let needsFill, workingFill, checkingFill, pausedFill, awaitFill, doneFill, idleFill: NSColor
+    var needs, working, checking, paused, `await`, done, idle: NSColor
+    var needsFill, workingFill, checkingFill, pausedFill, awaitFill, doneFill, idleFill: NSColor
 
     func accent(_ s: String) -> NSColor {
         switch s {

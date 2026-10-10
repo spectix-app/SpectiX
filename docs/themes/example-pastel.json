@@ -1,0 +1,21 @@
+{
+  "id": "pastel-glass",
+  "name": "Pastel Glass",
+  "nameZH": "粉彩玻璃",
+  "description": "Frosted glass with soft pastel status colors",
+  "descriptionZH": "磨砂玻璃 + 柔和的粉彩状态色",
+  "base": "default",
+  "status": {
+    "needs": "#F48B94",
+    "working": "#7DB8F0",
+    "checking": "#F0C674",
+    "paused": "#CBA6F7",
+    "await": "#7FD1C4",
+    "done": "#8FD6A8",
+    "idle": "#A6ADC8"
+  },
+  "metrics": {
+    "card": 16,
+    "group": 18
+  }
+}

@@ -608,6 +608,9 @@ extension Status {
 // figure that the whole colour scheme is built on. What light mode actually lacked was
 // an EDGE, not a softer colour — a pale bar on a pale bed has no boundary to read. So
 // light mode keeps these exact values and gains an outline instead (see NeonBar.draw).
+//
+// 工作 / 消耗 joined later (2026-10-10) as rows six and seven. Their hues sit only ~35–55°
+// from the nearest of the five, which is why each also has its own glyph.
 extension Metric {
     static func accent(_ m: Metric) -> NSColor {
         let rgb: (CGFloat, CGFloat, CGFloat)
@@ -617,6 +620,8 @@ extension Metric {
         case .streak:  rgb = (1.000, 0.616, 0.239)   // #FF9D3D
         case .auto:    rgb = (0.961, 0.427, 1.000)   // #F56DFF
         case .control: rgb = (0.706, 1.000, 0.239)   // #B4FF3D
+        case .work:    rgb = (1.000, 0.361, 0.478)   // #FF5C7A — the 🍅 clock's red, neon
+        case .tokens:  rgb = (0.239, 0.878, 1.000)   // #3DE0FF
         }
         return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
     }

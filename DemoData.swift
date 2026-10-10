@@ -822,3 +822,20 @@ extension Demo {
         ]
     }
 }
+
+// MARK: - 工作 metric (效能 panel)
+
+extension Demo {
+    /// Fake hours for the last two weeks — the real ledger is the user's own day.
+    static func dailyWorkSec() -> [Int: Int] {
+        let hours: [Double] = [5.2, 6.8, 4.1, 0, 7.3, 6.0, 5.5, 3.2, 0, 6.6, 7.9, 5.1, 6.2, 2.4]
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        var out: [Int: Int] = [:]
+        for (i, h) in hours.reversed().enumerated() {
+            guard let d = cal.date(byAdding: .day, value: -i, to: today) else { continue }
+            out[Int(d.timeIntervalSince1970)] = Int(h * 3600)
+        }
+        return out
+    }
+}

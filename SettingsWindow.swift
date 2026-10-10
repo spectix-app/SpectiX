@@ -355,10 +355,6 @@ final class SettingsPane: NSView {
         themeCard.onEditColors = { [weak self] in self?.jumpToSection(2) }
         themeChooser = themeCard
         column.addSubview(themeCard)
-        // Locked reads as the built-in theme (AppSettings.themeID), so the chooser has
-        // nothing left to choose — dim it rather than let a pick appear to take and
-        // then not show up anywhere.
-        applyProLock(themeCard, .themes)
 
         // ── Display section: toggles for what each row shows ──
         let displaySection = NSTextField(labelWithString: L("显示", "Display"))

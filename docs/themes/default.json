@@ -1,0 +1,105 @@
+{
+  "base" : "default",
+  "description" : "Frosted glass · translucent tiles, hairline edges",
+  "descriptionZH" : "磨砂玻璃 · 半透明面 + 细描边",
+  "id" : "default-copy",
+  "metrics" : {
+    "card" : 13,
+    "chip" : 9,
+    "group" : 14,
+    "popoverRadius" : 10,
+    "windowRadius" : 10
+  },
+  "name" : "Default (copy)",
+  "nameZH" : "默认（副本）",
+  "palette" : {
+    "agentAccent" : "#7C8CFF",
+    "agentDeep" : "#5A6BF5",
+    "agentManagerAccent" : "#4FC0D8",
+    "agentNeutralAccent" : "#949EB3",
+    "agentSeam" : {
+      "dark" : "#7C8CFF73",
+      "light" : "#5A6BF561"
+    },
+    "agentSegmentFill" : {
+      "dark" : "#7C8CFF1A",
+      "light" : "#E0E6FF9E"
+    },
+    "barTrack" : {
+      "dark" : "#FFFFFF14",
+      "light" : "#00000014"
+    },
+    "baseFill" : {
+      "dark" : "#1F1F21",
+      "light" : "#FFFFFF"
+    },
+    "cardFill" : {
+      "dark" : "#FFFFFF0F",
+      "light" : "#FFFFFF80"
+    },
+    "cardFillHover" : {
+      "dark" : "#FFFFFF21",
+      "light" : "#FFFFFFB8"
+    },
+    "cardFloat" : {
+      "dark" : "#3B3B3E",
+      "light" : "#FFFFFF"
+    },
+    "claudeOrange" : {
+      "dark" : "#F59469",
+      "light" : "#D46640"
+    },
+    "divider" : {
+      "dark" : "#FFFFFF14",
+      "light" : "#0000000F"
+    },
+    "hairline" : {
+      "dark" : "#FFFFFF1F",
+      "light" : "#00000012"
+    },
+    "hairlineHover" : {
+      "dark" : "#FFFFFF38",
+      "light" : "#00000021"
+    },
+    "modelHaiku" : {
+      "dark" : "#F0B866",
+      "light" : "#AD731A"
+    },
+    "modelOpus" : {
+      "dark" : "#B39EF7",
+      "light" : "#7359CC"
+    },
+    "modelSonnet" : {
+      "dark" : "#59D1C7",
+      "light" : "#0D8078"
+    },
+    "proAccent" : {
+      "dark" : "#E0A63C",
+      "light" : "#B87F1E"
+    },
+    "shellTagAccent" : {
+      "dark" : "#5CA9FF",
+      "light" : "#146DC8"
+    },
+    "usageGreen" : {
+      "dark" : "#57D98F",
+      "light" : "#1A9966"
+    }
+  },
+  "status" : {
+    "await" : "#00BFA5",
+    "awaitFill" : "#008074",
+    "checking" : "#FFD400",
+    "checkingFill" : "#A66305",
+    "done" : "#00E676",
+    "doneFill" : "#1C854A",
+    "idle" : "#78909C",
+    "idleFill" : "#6B7585",
+    "needs" : "#FF2D55",
+    "needsFill" : "#DB3336",
+    "paused" : "#E040FB",
+    "pausedFill" : "#A342BD",
+    "working" : "#00B0FF",
+    "workingFill" : "#0D6BF2"
+  }
+}

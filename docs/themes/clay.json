@@ -1,0 +1,156 @@
+{
+  "base" : "clay",
+  "description" : "Soft clay · warm cream, twin-light shadows",
+  "descriptionZH" : "软塑陶土 · 暖奶油底 + 双光源软阴影",
+  "id" : "clay-copy",
+  "metrics" : {
+    "card" : 18,
+    "chip" : 12,
+    "group" : 20,
+    "popoverRadius" : 22,
+    "windowRadius" : 22
+  },
+  "name" : "Clay (copy)",
+  "nameZH" : "陶土（副本）",
+  "palette" : {
+    "agentAccent" : "#8E95E2",
+    "agentDeep" : {
+      "dark" : "#B4BAF5",
+      "light" : "#4A52B0"
+    },
+    "agentManagerAccent" : {
+      "dark" : "#7FD8E8",
+      "light" : "#1F7F8C"
+    },
+    "agentNeutralAccent" : {
+      "dark" : "#7A736B",
+      "light" : "#9A938A"
+    },
+    "agentSeam" : {
+      "dark" : "#626AB8",
+      "light" : "#A6ABDE"
+    },
+    "agentSegmentFill" : {
+      "dark" : "#3D3C48",
+      "light" : "#EFEDFA"
+    },
+    "barTrack" : {
+      "dark" : "#1A1917",
+      "light" : "#E6E2DA"
+    },
+    "baseFill" : {
+      "dark" : "#211F1D",
+      "light" : "#EFECE6"
+    },
+    "cardFill" : {
+      "dark" : "#2B2926",
+      "light" : "#F7F5F1"
+    },
+    "cardFillHover" : {
+      "dark" : "#34312D",
+      "light" : "#FDFCFA"
+    },
+    "cardFloat" : {
+      "dark" : "#34312D",
+      "light" : "#FDFCFA"
+    },
+    "claudeOrange" : {
+      "dark" : "#F5AE80",
+      "light" : "#A34D22"
+    },
+    "divider" : {
+      "dark" : "#3B3733",
+      "light" : "#E0DBD1"
+    },
+    "hairline" : {
+      "dark" : "#3B3733",
+      "light" : "#E0DBD1"
+    },
+    "hairlineHover" : {
+      "dark" : "#4A453F",
+      "light" : "#D4CEC2"
+    },
+    "modelHaiku" : {
+      "dark" : "#F0B866",
+      "light" : "#A87616"
+    },
+    "modelOpus" : {
+      "dark" : "#B39DF8",
+      "light" : "#7A63C4"
+    },
+    "modelSonnet" : {
+      "dark" : "#5AD1C8",
+      "light" : "#2E8C86"
+    },
+    "proAccent" : {
+      "dark" : "#EDBB5C",
+      "light" : "#A8701A"
+    },
+    "shellTagAccent" : {
+      "dark" : "#8AAFE6",
+      "light" : "#2E609C"
+    },
+    "usageGreen" : {
+      "dark" : "#A6DEC3",
+      "light" : "#4E9E7A"
+    }
+  },
+  "status" : {
+    "await" : {
+      "dark" : "#4FC7B4",
+      "light" : "#58C2B0"
+    },
+    "awaitFill" : {
+      "dark" : "#8FE0D0",
+      "light" : "#0F6E62"
+    },
+    "checking" : {
+      "dark" : "#F0B84A",
+      "light" : "#E9B85A"
+    },
+    "checkingFill" : {
+      "dark" : "#FFD478",
+      "light" : "#8A5C05"
+    },
+    "done" : {
+      "dark" : "#55D096",
+      "light" : "#6FCFA0"
+    },
+    "doneFill" : {
+      "dark" : "#7FE6B4",
+      "light" : "#24785A"
+    },
+    "idle" : {
+      "dark" : "#928C84",
+      "light" : "#ADA79D"
+    },
+    "idleFill" : {
+      "dark" : "#B8B2AA",
+      "light" : "#5E584F"
+    },
+    "needs" : {
+      "dark" : "#F0736A",
+      "light" : "#E8756E"
+    },
+    "needsFill" : {
+      "dark" : "#FF9990",
+      "light" : "#A8332B"
+    },
+    "paused" : {
+      "dark" : "#C077E0",
+      "light" : "#B87FD6"
+    },
+    "pausedFill" : {
+      "dark" : "#DCA5F0",
+      "light" : "#6B3585"
+    },
+    "working" : {
+      "dark" : "#6BA8E8",
+      "light" : "#74A8E0"
+    },
+    "workingFill" : {
+      "dark" : "#97C6F5",
+      "light" : "#1F5C99"
+    }
+  }
+}

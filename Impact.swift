@@ -114,6 +114,8 @@ enum Metric: String, CaseIterable {
     case streak     // 连续 — days
     case auto       // 托管 — count of automatic jumps
     case control    // 掌控 — peak concurrent sessions
+    case work       // 工作 — seconds YOU worked (the 🍅 clock), not anything the app did
+    case tokens     // 消耗 — tokens burned, all four classes (Tok.total)
 }
 
 // MARK: - Rules
@@ -144,7 +146,9 @@ struct MetricValue {
 
     // A record needs a real predecessor: the first period ever isn't "breaking" anything
     // (priorBest == 0), it's just the first data point (see D6 新用户前 4 周).
-    var isRecord: Bool { value > priorBest && priorBest > 0 }
+    // 工作 / 消耗 are how much you put in, not what the app did for you — a "record" there
+    // is not something to celebrate, on the row or in the headline.
+    var isRecord: Bool { metric != .work && metric != .tokens && value > priorBest && priorBest > 0 }
     var best: Int { max(value, priorBest) }
     // Bar length, 0…1. A record is exactly full — the bar is 「占你的个人最佳」 and this
     // period IS the best now.
@@ -350,7 +354,8 @@ final class ImpactStore {
     // supplies the 连续 metric: "did you use it at all today" is a fact about Claude
     // sessions, which lives in events.jsonl — re-reading it here would parse the same
     // file twice.
-    func impact(range: TimeRange, now: Date = Date(), usage: [UsageEvent]) -> PeriodImpact {
+    /// `work`: seconds worked per local day, keyed by the day's start (BreakReminder.dailyWorkSec).
+    func impact(range: TimeRange, now: Date = Date(), usage: [UsageEvent], work: [Int: Int] = [:]) -> PeriodImpact {
         let cal = Self.cal()
         let curBucket = range.bucketStart(Int(now.timeIntervalSince1970), cal)
         var byBucket: [Int: [ImpactEvent]] = [:]
@@ -385,6 +390,10 @@ final class ImpactStore {
         series[.streak] = Self.streakByBucket(usage: usage,
                                               buckets: Set(byBucket.keys).union([curBucket]),
                                               range: range, cal: cal)
+        for (day, sec) in work { series[.work, default: [:]][range.bucketStart(day, cal), default: 0] += sec }
+        for e in usage where e.event == "done" {
+            series[.tokens, default: [:]][range.bucketStart(e.ts, cal), default: 0] += Tok.total(e)
+        }
 
         // 全部 is one bucket, so stepping back from it lands on ITSELF. It has to be told
         // there is no predecessor, or every 「较上期」 compares the period with a copy of

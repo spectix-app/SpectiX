@@ -81,6 +81,7 @@ Open the Claude or Codex account card to see the accounts you have used, each wi
 
 - **Signed build:** download from https://spectix.app. The installer places `SpectiX.app`, the hook scripts, and the companion VS Code extension.
 - **From source:** see below.
+- **What changed in each release:** [CHANGELOG.md](CHANGELOG.md).
 
 ## Build from source
 

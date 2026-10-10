@@ -276,6 +276,7 @@ final class ThemeChooserCard: NSView {
 
     private let card = GlassCard(radius: Theme.card, glows: false)
     private var choices: [ThemeChoiceCard] = []
+    private var choiceIDs: [String] = []
     private let line = NSView()
     private let lineLabel = NSTextField(labelWithString: "")
     private var observer: NSObjectProtocol?
@@ -336,8 +337,11 @@ final class ThemeChooserCard: NSView {
         var rowGap: CGFloat = 10
         var rowLeader: ThemeChoiceCard?
 
+        // Re-read the theme folder so a file dropped in since launch shows up.
+        ThemeRegistry.reload()
         for (i, spec) in ThemeRegistry.all.enumerated() {
             let choice = ThemeChoiceCard(spec: spec)
+            choiceIDs.append(spec.id)
             choice.onClick = { [weak self] in self?.onPick?(spec.id) }
             card.addSubview(choice)
             choices.append(choice)
@@ -422,8 +426,10 @@ final class ThemeChooserCard: NSView {
     /// Light exactly the card whose theme is stored.
     private func repaintSelection() {
         let current = AppSettings.themeID
-        for (i, c) in choices.enumerated() {
-            c.set(selected: ThemeRegistry.all[i].id == current)
+        // Our own ids, not `ThemeRegistry.all[i]`: the registry can be reloaded
+        // (a pick re-reads the folder) while this view is still alive.
+        for (c, id) in zip(choices, choiceIDs) {
+            c.set(selected: id == current)
         }
     }
 

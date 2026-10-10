@@ -36,9 +36,6 @@ enum ProFeature: String, CaseIterable {
     /// The usage columns — ⏱ working time, ◆ tokens, the context gauge, model chip.
     case metrics
 
-    /// Themes beyond the built-in default.
-    case themes
-
     /// Per-project emoji / image icons.
     case customIcons
 }

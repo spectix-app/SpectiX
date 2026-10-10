@@ -12,7 +12,7 @@ mkdir -p "$OUT"
 cp tools/cat-stretch.jpg tools/cat-glasses.jpg "$OUT/"
 swiftc -Onone \
   BreakReminder.swift Impact.swift Stats.swift \
-  Theme.swift ThemeSpec.swift ThemeRegistry.swift ThemeDefault.swift ThemeClay.swift \
+  Theme.swift ThemeSpec.swift ThemeRegistry.swift ThemeFile.swift ThemeDefault.swift ThemeClay.swift \
   L10n.swift AppSettings.swift Pro.swift Tips.swift \
   tools/break-preview/stubs.swift tools/break-preview/main.swift \
   -o "$OUT/render" -framework Cocoa

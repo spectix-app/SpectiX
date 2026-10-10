@@ -143,22 +143,23 @@ enum AppSettings {
         // An id we no longer ship (a downgrade, a removed theme, a hand-edited
         // preference) reads back as the default instead of leaving the app unstyled.
         get {
-            // Locked reads as the built-in theme — the same path an unknown id takes,
-            // so a free install is styled, just not with a theme it didn't pay for.
-            guard Pro.enabled(.themes) else { return ThemeRegistry.fallback.id }
             let stored = UserDefaults.standard.string(forKey: themeIDKey) ?? ThemeRegistry.fallback.id
             return ThemeRegistry.isKnown(stored) ? stored : ThemeRegistry.fallback.id
         }
         set {
-            // Compare against what's STORED, not the gated read: while locked the getter
-            // always answers the fallback, which would make every tap look like a change.
+            // Compare against what's STORED, not the read: the getter answers the
+            // fallback for an id whose file is gone, which would make every tap look
+            // like a change.
             let stored = UserDefaults.standard.string(forKey: themeIDKey) ?? ThemeRegistry.fallback.id
-            guard newValue != stored else { return }   // no rebuild for a no-op tap
+            // A file theme re-applies even when it is already active: re-reading the
+            // folder and rebuilding is how its author sees an edit to the file.
+            let isFile = ThemeRegistry.isFileTheme(newValue)
+            if isFile { ThemeRegistry.reload() }
+            guard newValue != stored || isFile else { return }   // no rebuild for a no-op tap
             UserDefaults.standard.set(newValue, forKey: themeIDKey)
             // Swap the palette BEFORE announcing it: observers rebuild their views
             // synchronously and must read the new spec, not the outgoing one. Applying
-            // the GATED id (not newValue) is what keeps a locked install on the built-in
-            // look while still remembering the pick — unlocking restores it untouched.
+            // the read-back id (not newValue) keeps an unknown id on the built-in look.
             Theme.apply(themeID)
             NotificationCenter.default.post(name: themeDidChange, object: nil)
         }
