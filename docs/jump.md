@@ -46,7 +46,7 @@ pane 路径上所有按 pid 对账的东西——扩展的 `term.show`、`verify
 |---|---|---|---|
 | 快捷键跳转 | `jumpToNextAttention` | **恒为全三桶** needs/paused/done，不受配置影响 | `lastJumpedId` 桶内循环；空池 → `returnToOrigin` |
 | 闲置自动跳转 | `maybeIdleAutoJump` | `jumpAutoPriority`（出厂 paused/needs） | latch（`idleJumpedIds`）逐个 surface，输入即清 |
-| 答完/恢复连跳 | `autoJumpToNextNeeds`（由 `notifyTransitions` 的 `answered` 触发） | `jumpAutoPriority`（出厂 paused/needs） | 取桶内第一行，跳一次 |
+| 答完/恢复连跳 | `autoJumpToNextNeeds`（由 `notifyTransitions` 的 `answered` 触发） | `jumpAutoPriority`（出厂 paused/needs） | 取桶内第一行，跳一次；**答完后等 0.5s 再跳**（`chainJumpDelay`，到点按最新 rows 重新选目标并过两道闸） |
 
 **★ 两条自动路径的桶范围是用户可配的（T184）**：`AppSettings.jumpAutoPriority` = `jumpPriority` 按 `jumpAutoStatuses` 过滤——**顺序只有一个源（`jumpPriority`）**，配置里存的只是成员资格。UI 是「跳转优先级」卡片里每个 chip 上的「自动 / Auto」小药丸（点一下开关，拖拽仍然只管顺序）。出厂 `jumpAutoDefault = ["paused","needs"]`，与改造前那句硬编码 `filter { $0 == "needs" || $0 == "paused" }` 逐字等价，**老用户升级零行为变化**。
 

@@ -50,6 +50,29 @@ if [ -n "$BAD_OPEN" ]; then
   exit 1
 fi
 
+# ── Persisted pane cache must load without trapping ──────────────────────────
+# pane-pins.json is decoded on the first pane scan after launch, so a value the
+# decoder traps on crashes the app on EVERY start until the user deletes a file
+# they don't know exists. Nothing at runtime would report that before a user
+# did, so the hostile-file cases in tools/pane-pins-check run on every build.
+PINS_CHECK="$(mktemp -d)/pane-pins-check"
+swiftc PanePins.swift tools/pane-pins-check/main.swift -o "$PINS_CHECK"
+if ! PINS_OUT=$("$PINS_CHECK"); then
+  echo "❌ pane-pins decoding regressed — tools/pane-pins-check:" >&2
+  printf '%s\n' "$PINS_OUT" | grep FAIL >&2
+  exit 1
+fi
+rm -rf "$(dirname "$PINS_CHECK")"
+
+# ── Hidden-terminal pane dots stay hidden after an in-window relayout ────────
+# A stale memo dot only shows up after a divider drag on a live editor, which no
+# other check exercises (T328). tools/pip-stack-check pins the geometry rule.
+if ! STACK_OUT=$(./tools/pip-stack-check.sh); then
+  echo "❌ pip de-stack rule regressed — tools/pip-stack-check:" >&2
+  printf '%s\n' "$STACK_OUT" | grep FAIL >&2
+  exit 1
+fi
+
 # ── Dev-only features ────────────────────────────────────────────────────────
 # -D DEV_BUILD turns on features that aren't ready to ship (Build.isDev in
 # Pro.swift; the Settings rows that own them carry a DEV badge). A dev-only
@@ -199,8 +222,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-    <key>CFBundleVersion</key><string>1.11</string>
-    <key>CFBundleShortVersionString</key><string>1.11</string>
+    <key>CFBundleVersion</key><string>1.12</string>
+    <key>CFBundleShortVersionString</key><string>1.12</string>
     <key>CFBundleExecutable</key><string>SpectiX</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>

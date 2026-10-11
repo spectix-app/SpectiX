@@ -41,6 +41,9 @@
 
 实测确认（2026-08-30，隔离 pty 上跑 `codex exec`）：Codex 触发 hook → 脚本沿父链解析出 tty → 正常写 `state-<tty>` / `title-<tty>` / `tp-<tty>`。**按 tty 键控对 Codex 原样成立**，这是整套接入的地基。
 
+> ★ **Codex 的 SessionStart 要等到第一条 prompt 才触发**（T283，2026-10-10 实测 0.151.0）。`codex exec` 的输出里 `hook: SessionStart` 紧贴在 `hook: UserPromptSubmit` 前面；TUI 冷启动后在输入框干等 20 秒，**一个 hook 都没跑**（金丝雀：另一个 SessionStart hook `scratchpad-cleanup.py` 该删的旧文件原样还在）。`source` 取值和 Claude 一样是 `startup|resume|clear|compact`，所以**不是 hook 认错了 source，hook 压根没被叫到** —— 改 hook 修不了，也别去改（会让信任 hash 失效）。
+> 后果是新开的 codex 会继承这个 tty 上一个会话留下的 `state-<tty>`（比如一个绿色「完成」）。App 侧兜底在 `InheritedState.swift`：**Codex 行的 state 文件比该 codex 进程启动得还早 → 当闲置读**。Claude 行不走这条（它启动时自己会写）。规则由 `./tools/inherited-state-check.sh` 钉住；Codex 升级后跑 `./tools/codex-sessionstart-probe.py`，它 exit 0 就说明 Codex 改成启动即触发了。
+
 ### 进程发现
 
 判据在 `AgentKind`（`main.swift`）：**可执行文件名恰为 `codex` + 有 tty + argv 里没有子命令**。
@@ -93,7 +96,7 @@ PostToolUse       → working(蓝)     命令【跑完】才发
 
 真相在进程树里。Claude Code 跑 Bash 工具 = 在 `claude` 进程下 spawn 一个命令外壳 `zsh -c '...eval 命令...'`（常驻的 `sourcekit-lsp` / `caffeinate` **不带 `-c`**，天然区分开）。
 
-`main.swift` 的 `runningToolShells(claudePid:since:)`：**当某行是 `needs` 时**，去 `claude` 的直接子进程里找命令外壳（`zsh`/`bash`/`sh` 且含 `-c`）。找到 → 说明弹窗已消失、命令在跑 → 渲染成蓝，而不是红。
+`main.swift` 的 `commandShells(kind:claudePid:)` + `fetchRows` 里的时刻守卫（T336 前叫 `runningToolShells`）：**当某行是 `needs` 时**，去 `claude` 的直接子进程里找命令外壳（`zsh`/`bash`/`sh` 且含 `-c`）。找到 → 说明弹窗已消失、命令在跑 → 渲染成蓝，而不是红。
 
 **但只有外壳还不够**——会踩「残留进程」误判：一个 session 可能有个**以前的 dev server 外壳还活着**（残留），同时又弹了个**新的、真在等你确认的**弹窗；光看有没有外壳会把红误判成蓝。
 
@@ -106,7 +109,7 @@ PostToolUse       → working(蓝)     命令【跑完】才发
 
 **★ hook 外壳排除（「闲置/需确认行时不时闪蓝」bug 的根因）**：
 Claude Code 跑 **hook** 用的外壳和跑 Bash 工具一模一样（`sh -c ~/.claude/hooks/….sh …`，有时带 snapshot 包装），同样是 `claude` 的直接子进程。停在弹窗上的会话每隔几秒收到 idle-ping/Notification hook——这个短命外壳的启动时刻**必然晚于** needs 写入，天然满足时刻守卫，被误判成「确认后在跑的命令」→ 行闪蓝几百毫秒后弹回。其他会话越忙 → state 写入越频繁 → App refresh 越密 → 撞上概率越高（看起来像「被别的终端影响」，实为采样频率效应）。
-→ 修复（`runningToolShells`）：① argv 含 `.claude/hooks/` 的外壳直接跳过；② 外壳必须已存活 ≥1s 才算数（真命令轻松超过，1s 延迟感知不到；短命 helper 壳永远不够格）。
+→ 修复（`commandShells`）：① argv 含 `.claude/hooks/` 的外壳直接跳过；② 外壳必须已存活 ≥1s 才算数（真命令轻松超过，1s 延迟感知不到；短命 helper 壳永远不够格）。
 
 ## 后台 subagent 台账（记账机制；颜色语义见 ★T314）
 
@@ -145,8 +148,9 @@ PreToolUse(Agent) → PostToolUse(Agent, 秒回, tool_response 带 agentId)
 
 - **`agents-<tty>`**（JSONL，一行一个 agent）：launch 时（PostToolUse Agent/Task 带 agentId）从 tool_input 抄 `subagent_type`/`description` 写 `{id,type,desc,start}`；retire（唤醒 UserPromptSubmit）**直接删掉那一行**（并删它的 step 文件），台账被删空则连文件一起 `rm`。手搓 JSON：type/desc 写入前 strip 反斜杠和双引号。
 - **★ 完成的 agent 立刻从列表消失（2026-08-18 改，改这块前必读）**：老做法是 retire 盖 `end`+`tokens` 保留该行、UI 显示「✓ 已返回」，等**下一次 launch** 再 prune 掉 done>300s 的旧行 —— 于是「不再派 agent 的会话，那几行永远挂着」。更糟的是 **retire 本身要等唤醒送到 UserPromptSubmit**，也就是**等用户下次敲字**：会话闲着时 agent 早就跑完了，UI 还把它画成蓝色运行中（实测现场 `agents-ttys003` 的行无 `end`，而它的 transcript 早已 `end_turn`）。现在**两条独立信号，谁先到算谁**：① **App 读 agent 自己的 transcript 尾部**，最后一条 assistant 消息的 `stop_reason != "tool_use"`（即 `end_turn`/`max_tokens`…）就是「这个 agent 的回合结束了」—— 这是**唯一在会话闲置时也能即时到达**的信号，读不到 `stop_reason` 一律当作还在跑（**绝不猜掉一个活着的 agent**）；② hook 的 retire 删行（台账追平）。App 侧同时丢弃任何带 `end` 的行，这样旧 hook 写的台账也不会再显示僵尸。**连带**：`AgentInfo` 不再有 `end`/`tokens`/`running` —— 列表里只可能有运行中的 agent，节点恒蓝、⏱ 一直在走、◆ 显示它自己的 context tokens。**徽标计数**只在**台账文件不存在**时才回退 `bg-<tty>`（不能在「过滤后为空」时回退，否则刚跑完的 agent 会变成一个点开是空的 🤖 ×1）。**读 agent transcript 必须先 `resolvingSymlinksInPath`**：resume/fork 出来的会话，`subagents/` 里是**指向原会话的 symlink**，属性读不跟随 link → 拿到的 size/mtime 是 link 的、永远不变 → 缓存永久命中，第一眼看到的状态就再也不更新了。
+- **★ 收尾格式会变，探针盯着（T332，2026-10-11）**：Claude Code 新版的 subagent 不再以 `end_turn` 结束，而是**最后调一次 `SubagentHandback` 工具**把报告交回去，这一行落盘时 `stop_reason` 为空 → 老判据把**每个**交回的 agent 都当成还在跑，🤖 行永远不消失（实测 72h 内 98 个已交回的 agent 有 71 个被判为在跑）。现在 `agentTail` 认两种结束：最新 assistant 消息里有 `SubagentHandback` 工具调用，**或** `stop_reason` 非 `tool_use`。**下次再换格式由 `tools/agent-tail-probe.py [小时]` 发现**：它拿父 transcript 里的交回记录（`<task-notification>` 的 `<task-id>` + `status=completed`，或 `<agent-message from=…>`）当真值，逐个对照 agentTail 的判法，已交回却被判在跑就 exit 1；交回之后 agent 文件又被写过的（被 resume 了）跳过。改 agentTail 的判据时，探针里的镜像函数 `agent_tail_finished` 要一起改。
 - **`agent-step-<tty>-<id>`**：**实测 subagent 的每个工具事件 payload 自带 `agent_id`（== 台账 agentId）+ `agent_type`**（2026-07 验证），所以 PreToolUse 能按 agent 归属 —— 共享 step-<tty> 照旧写（行副标题跟最新活动），同时镜像一份进该 agent 自己的 step 文件；retire 时删。
-- **★ 自愈补记（「agent 在跑但列表里没有」bug 的修复，2026-08-04，改这块前必读）**：roster **只在 launch 那一刻写**，所以它一旦丢失就**永远不会重建**——漏记的 launch、SessionStart 清账、stale 误清，任何一条路径丢了 roster，这个 agent 在它剩余的整个生命里都不会再出现在 UI 上，哪怕它每隔几秒还在调工具。**病征是一个孤儿 `agent-step-<tty>-<id>` 在持续刷新，旁边却没有 `bg-<tty>` 也没有 `agents-<tty>`**（实测现场：agent 已跑 5 分钟、transcript 还在长，UI 里一个 agent 都不显示；App 的 `backgroundAgents()` 只读 roster，读不到就等于不存在）。修复：**subagent 的工具事件本身就是「它还活着」的铁证**——PreToolUse 拿到 `agent_id` 时若发现它不在台账上，就地把台账 + roster 补回去，下一次工具调用 UI 即恢复，**不管当初是被谁弄丢的**。`type` 取事件自带的 `agent_type`；`desc` 只存在于已丢失的 launch payload 里，故留空由 UI 回退到 type；`start` **不stamp当前时间**，而是取该 agent transcript（`<父 transcript 去后缀>/subagents/agent-<id>.jsonl`）的**创建时间**，否则每个被恢复的 agent 的 ⏱ 都会从 0 重新计。正常路径上零成本：id 在账上就跳过整段，只花一次 `grep`。
+- **★ 自愈补记（「agent 在跑但列表里没有」bug 的修复，2026-08-04，改这块前必读）**：roster **只在 launch 那一刻写**，所以它一旦丢失就**永远不会重建**——漏记的 launch、SessionStart 清账、stale 误清，任何一条路径丢了 roster，这个 agent 在它剩余的整个生命里都不会再出现在 UI 上，哪怕它每隔几秒还在调工具。**病征是一个孤儿 `agent-step-<tty>-<id>` 在持续刷新，旁边却没有 `bg-<tty>` 也没有 `agents-<tty>`**（实测现场：agent 已跑 5 分钟、transcript 还在长，UI 里一个 agent 都不显示；App 的 `backgroundAgents()` 只读 roster，读不到就等于不存在）。修复：**subagent 的工具事件本身就是「它还活着」的铁证**——PreToolUse 拿到 `agent_id` 时若发现它不在台账上，就地把台账 + roster 补回去，下一次工具调用 UI 即恢复，**不管当初是被谁弄丢的**。`type` 取事件自带的 `agent_type`；`desc` 只存在于已丢失的 launch payload 里，故留空由 UI 回退到 type；`start` **不stamp当前时间**，而是取该 agent transcript（`<父 transcript 去后缀>/subagents/agent-<id>.jsonl`）的**创建时间**，否则每个被恢复的 agent 的 ⏱ 都会从 0 重新计。正常路径上零成本：id 在账上就跳过整段，只花一次 `grep`。**★ T339（2026-10-08）：`SubagentHandback` 不补记** —— 那是 agent 的最后一次调用，不是「它还活着」的证据；补进去之后若交回报告恰好落在忙碌回合里（不产生 UserPromptSubmit），这条账就没人销，会话一闲下来 sweep 也不跑（实测一个已结束的 agent 被显示成运行中一整天）。**★ 2026-10-08：并行派发会丢 roster 行** —— 同一秒派出的几个 agent，PostToolUse hook 并发跑，launch 处那段「读→改写→mv」去重会让一个 hook 的 mv 盖掉兄弟刚 append 的行（实测派 4 个、台账 4 个、roster 只剩 2 个：🤖 计数对、展开列表只有 2 个）。三处修：① launch 只在真有要删的行时才改写，常态只剩一次原子 append；② 顶部 sweep **每个事件都对账**：台账上活着、roster 里没有的 id，从 harness 在 launch 时写的 `subagents/agent-<id>.meta.json` 读 `agentType` + `description` 补回整行（`mkdir` 锁防并发重复补）—— 不能只靠上面的 PreToolUse 自愈，因为 agent 一次长思考可以好几分钟不调工具，那段时间列表一直缺它；③ sweep 的心跳加上 agent 自己 transcript 的 mtime，取较新者，长思考的 agent 不会被当僵尸清掉。 **App 侧同一道兜底**：roster 里的 agent 读不到自己的 transcript（`agentTail` 的 `missing`）、且 `max(agent-step mtime, start)` 已超 600s，`backgroundAgents` 直接把它当已结束 —— 和 hook sweep 同一个心跳口径，只是不依赖下一次 hook 事件。
 - App 侧：`backgroundAgents(tty:ctxLimit:)` 把 roster + step 文件拼成 `SessionRow.agents`（只留运行中的，见上条），驱动点击 🤖 徽标展开的 agent sublist（AgentCell，设计 `design/agent-sublist-5-proposals.html` 方案 9）。每个 agent 的 context 占用与「跑完没有」由 `agentTail(parentTranscript:agentId:)` **一次扫描**同时得出。
 - **per-agent context %（T80）**：roster 的 `id` **就是**子 agent transcript 的文件名（`<父 transcript 去后缀>/subagents/agent-<id>.jsonl`），所以 App 用 `tp-<tty>` + roster id 就能读到每个 agent **自己的** context 占用，**hook 不用管**（它只在 retire 时盖累计 token）。口径 / 缓存 / 未知隐藏见 [`docs/row-display.md`](row-display.md)。
 - 已知缺口：通知在主回合忙碌时到达 → 不触发独立 UserPromptSubmit → retire 不跑（与台账漏销同源；2026-08-04 实测轻易复现：「边忙边派 agent」时通知只是被注入当前回合，销账根本不执行），agent 在 sublist 里保持「运行中」直到 stale sweep 按**它自己的心跳**清场（逐 id 判活后这个兜底才真正生效——老的整本 mtime 判据在持续派 agent 的会话里永远清不掉它）；per-agent 等确认（daemon waiting 是会话级）不显示。
@@ -160,7 +164,7 @@ PreToolUse(Agent) → PostToolUse(Agent, 秒回, tool_response 带 agentId)
 修复靠 hook 之外的第二信号源：**Claude Code v2.1 daemon 为每个活会话写 `~/.claude/sessions/<pid>.json`**，含 hook 看不到的 `status` 字段——`busy`（模型在忙 / 已确认命令在跑）/ `idle`（轮次结束等你下一句）/ `waiting`（卡在待你响应的交互，同级 `waitingFor` 说明是什么："permission prompt" / 问题 / plan）。实测对照：正常 done→`idle`、模型忙→`busy`、**只有卡着等你交互才 `waiting`**。
 
 - App 侧 `daemonSessionStatus(_ pid:)`（`main.swift`）：按 **pid** 键控读 json（pid 每进程唯一，和 tty 一样不塌缩兄弟会话，符合本项目键控原则；不用 sessionId），返回 **`(status, updatedAt)` 元组**——`updatedAt` 来自 json 的 `statusUpdatedAt`（**epoch 毫秒**，读出来除 1000 转秒，才能直接和 `fileMTime` 比大小）。另外校验 json 里的 `pid` 字段确实等于本 pid（防串号）；文件缺失/解析失败返回 `("", 0)` → 降级到 hook 判定。
-- **★ 判定链是三条分支，不是一条**（改这块前必读）。`fetchRows()` 拿到 hook status 后**最后一步**跑，放在 `runningToolShells` 探测**之后**（所以残留 dev-server 外壳的误判压不过它）。三条按序 if/else：
+- **★ 判定链是三条分支，不是一条**（改这块前必读）。`fetchRows()` 拿到 hook status 后**最后一步**跑，放在外壳探测**之后**（所以残留 dev-server 外壳的误判压不过它）。三条按序 if/else：
 
   | daemon | 附加条件 | 结果 | 修的是什么 |
   |---|---|---|---|
@@ -173,7 +177,7 @@ PreToolUse(Agent) → PostToolUse(Agent, 秒回, tool_response 带 agentId)
   - **`bgShells == 0`**（只 paused 那条）：双保险，绝不把「后台命令还在跑」读成暂停。`bgShells > 0` 已在上游强制 `await`（T312）、根本进不到这个 needs/working 分支，守卫留着兜底。
 - 局限：daemon-detected 的 needs 不经 hook → events.jsonl 不记 decision，统计漏这类后台确认（次要）；`waiting` 语义按「只出现在 pending 交互」采样得出，若未来 daemon 用 waiting 表示某种不需响应的等待需再收窄。
 - **★ 监听 sessions 目录（「暂停后不立马高亮」bug 的修复）**：`paused`（中断 = No/Esc/Ctrl+C）**不发任何 hook**，只有 daemon 改 `sessions/<pid>.json` → 老代码只在 2.5s dataTimer poll 才读到 → 暂停高亮（`flashPaused`）最多迟 2.5s 才画。修复：`startStateWatcher` 的 FSEvents watch-paths 加 `sessionsDir`，再对 `sessionsDir` 起一个 kqueue `startDirSource(create:false)`（daemon 目录非我方所有，`create:false`；缺失就跳过 kqueue 靠 FSEvents 兜）。daemon 一改状态即触发 `refresh()` → `notifyTransitions` 秒画 paused 环。watcher 共用 `refresh()` 的 burst 合并（`refreshGen` 头尾守卫），daemon 高频写不会压垮。
-- **★ 监听器会跳过两类「跟行无关」的写入（2026-09-24，CPU 修复）**：`terminals-*.json` / `window-*.json`（VSCode 插件每窗口每 2 秒的心跳，读方按 mtime 判活，**所以插件不能改成「内容变了才写」**）和 `*.log`（我方自己的 diag 日志）。以前它们每写一次就触发一整轮全机进程扫描，实测 20 秒 85 次写入里占 55 次，是 dev 版 6 天烧掉约 5 小时 CPU 的主因。判定在 `AppController.isWatcherNoise`；这些文件仍由 2.5s dataTimer 读到。**往这个目录新加一种「行依赖的」文件时，别用 `window-` / `terminals-` 前缀或 `.log` 后缀**，否则它的变化要等最多 2.5 秒才上屏。同一轮还给 `processArgs`（按 pid + 启动时刻 + 可执行名缓存，exec 会换可执行名所以它必须在键里）和 tty 名加了缓存。
+- **★ 监听器会跳过两类「跟行无关」的写入（2026-09-24，CPU 修复）**：`terminals-*.json` / `window-*.json`（VSCode 插件每窗口每 2 秒的心跳，读方按 mtime 判活，**所以插件不能改成「内容变了才写」**）和 `*.log`（我方自己的 diag 日志）。以前它们每写一次就触发一整轮全机进程扫描，实测 20 秒 85 次写入里占 55 次，是 dev 版 6 天烧掉约 5 小时 CPU 的主因。判定在 `AppController.isWatcherNoise`；这些文件仍由 2.5s dataTimer 读到。**往这个目录新加一种「行依赖的」文件时，别用 `window-` / `terminals-` 前缀或 `.log` 后缀**，否则它的变化要等最多 2.5 秒才上屏。回归检查：`./tools/idle-cpu-probe.sh`（对着在跑的 App 往目录里以 10 Hz 追加一个 `.log`，噪声段比安静段多出 8 个百分点以上的 CPU 就 exit 1；2026-10-11 实测修好的版本 +2、把 `.log` 那条改回去的版本 +24）。同一轮还给 `processArgs`（按 pid + 启动时刻 + 可执行名缓存，exec 会换可执行名所以它必须在键里）和 tty 名加了缓存。
 
 ## ★ 陈旧度闸门：两个信号一起静止时（2026-08-25，改这块前必读）
 
@@ -186,7 +190,7 @@ PreToolUse(Agent) → PostToolUse(Agent, 秒回, tool_response 带 agentId)
 | 兜底 | 失效原因 |
 |---|---|
 | hook 的 >600s 僵尸台账 sweep | 挂在「下一次 hook 事件」上跑。零事件 → 永不执行，台账里的 id 六天后还挂着 |
-| `runningToolShells` 忙碌探测 | 只在 `status == "needs"` 时才进（见上「忙碌探测 + 时刻守卫」节），冻住的行是 `working`，整段不进 |
+| 外壳忙碌探测 | 只在 `status == "needs"` 时才进（见上「忙碌探测 + 时刻守卫」节），冻住的行是 `working`，整段不进 |
 | daemon 三分支 | 没有分支匹配 `busy` + `working`；且两条带守卫的分支都要求 `updatedAt > state mtime`，而 state 文件也停了 → **补盲机制恰好在会话冻死时集体退场** |
 
 **根因不是哪条分支写错，而是 `working` 从来没有陈旧度闸门**——`done` 从第一天就有（`fileMTime < launchTime → idle`），`working` 一个都没有，所以六天前写的 `working` 和一秒前写的在 App 眼里完全一样。蓝色的语义是「在忙，别管它」，**误报的代价就是用户真的一直不管**。
@@ -197,7 +201,7 @@ PreToolUse(Agent) → PostToolUse(Agent, 秒回, tool_response 带 agentId)
 if status == "working",
    now - fileMTime("state-<tty>") > 600,
    now - daemon.updatedAt > 600,
-   runningToolShells(claudePid: s.claudePid, since: 0).count == 0 { status = "paused" }
+   shells.isEmpty { status = "paused" }   // 全部外壳，含服务（T336 review 后保留原口径）
 ```
 
 - **必须两个信号都陈旧，不是任一**：只要还有一个在动就保持蓝。长思考期不发工具事件、但 daemon 会翻 busy；长 Bash 不发 hook 流量、但留着活的命令外壳——两种合法的「安静地忙」各由一条守卫接住。
@@ -225,7 +229,7 @@ if status == "working",
 | 局限 | 后果 | 为什么接受 |
 |---|---|---|
 | **系统睡眠 ≥10 分钟**（合盖）会让所有 mid-turn 的行在唤醒瞬间同时满足前两条 | 唤醒时可能几行一起短暂翻洋红 | 判据用的是墙钟，排除睡眠要引入单调钟 + 每行观察戳。而合盖时那些回合大多**确实**被打断了，判 paused 语义并不错；就算错了，下一次工具事件就刷回蓝，且 frozen 行已被摘出注意力池，代价只剩颜色闪一下 |
-| **登录 shell 不是 zsh/bash/sh**（fish / nushell） | 该用户的前台长命令数不到外壳，跑过 600s 会被判 paused | `runningToolShells` 的进程名白名单是既有判据（不是这道闸门引入的），改它要连带重验「确认后长命令在跑」那条主路径。本机无法复现，不盲改 |
+| **登录 shell 不是 zsh/bash/sh**（fish / nushell） | 该用户的前台长命令数不到外壳，跑过 600s 会被判 paused | `commandShells` 的进程名白名单是既有判据（不是这道闸门引入的），改它要连带重验「确认后长命令在跑」那条主路径。本机无法复现，不盲改 |
 | **hook 停写但会话仍在跑工具**时可能频闪 | 有外壳的瞬间翻蓝、外壳一消失又翻洋红，几秒一个来回 | 需要「hook 坏了但 Claude Code 还活着」这种双重异常才成立，属次生场景。frozen 行不画圈，所以频闪只影响列表里的颜色 |
 
 
@@ -284,18 +288,21 @@ if status == "working",
 | 一轮刚起步，daemon 还停在上一轮 idle | daemon `idle` 但**旧于** working 写入 → 时刻守卫挡掉 | 运行中(蓝)，不闪暂停 |
 | **会话冻死：主回合无 Stop 就结束**（派完 agent 没等到唤醒） | 无外壳，且 state 文件与 daemon 双双 >600s 未动 | 暂停(洋红) |
 | 后台 subagent 在跑、主回合已 Stop（★T314） | 台账非空（App 侧判定；state 文件仍是 done） | **await(青「等待」)** + 🤖 ×N 徽标 + 副标题 `▸ 后台 agent · N 个运行中 · <时长>`；完成音与横幅都不响（见台账节 ★T314） |
+| 后台**服务**（外壳的子孙进程在监听 TCP 端口：预览 http.server / expo / vite）还开着（★T336） | 外壳同上，但 `ServiceProbe.scan` 在它子孙里读到 LISTEN 端口 | **不影响状态**：该完成就完成、该闲置就闲置；行尾挂 `:端口` 标签（会话 >1 天没动 → 琥珀）+ 所在项目卡片最底下的服务行 |
 | 后台 Bash（`run_in_background`）还在跑，主回合已 Stop（★T312） | 外壳带 `shell-snapshots/` 签名、存活 ≥1s（启动**早于** done，`since=0` 无时刻守卫） | **await(青「等待」)** + 副标题 `▸ 后台命令 · N 个 shell 运行中 · <时长>`（不是运行中蓝、不是完成绿、不是暂停，见下节） |
 
 ## 后台 Bash 命令补盲（探测机制；颜色语义见 ★T312）
 
 > **★ T312 第五状态「等待」（改这块前必读）**：这条路径的颜色改过三次。最早探到活外壳就涂 `working`（蓝）；**T54 反转**成 `done` 绿——后台命令不占用主循环，你照样能直接和 AI 干别的，所以不算「忙」；**T312 再改**：绿也不准，因为命令一退出 AI 会**自己接着跑**，这时并没有什么事轮到你。既不是运行、不是完成、也不是闲置，就是第四个答案 —— **`await`（青「等待」，#00BFA5，空心缺口环 4s 一转 + 实心青药丸）**。∴ `bgShells > 0` 现在把 status 强制成 `await`，**副标题 `▸ 后台命令 · N 个 shell 运行中 · <时长>` 照常显示**（`hasStep` 门控按 `bgShells > 0` 放行）。**内部键是 `await` 不是 `waiting`**：daemon 的 `sessions/<pid>.json` 里 `waiting` 早就表示「等你答确认」→ needs，同一段判定链里两个 waiting 必混。**state 文件里永远不会出现 `await`**——hook 不写它，它完全由 App 的探测得出。**长驻 dev server 也一直显示等待**（用户 2026-09-10 拍板）：几小时的 `expo start` 那一行就是青色 + 「1 个 shell 运行中 · 2h」，完成音（hook 在 Stop 时播）照旧响，但 App 的「完成」横幅不会弹——它要等真正的 done。（**后台 agent 那条路径 T314 起连完成音也闸掉了**，shell 这条不闸：shell 压根不进 `bg-<tty>` 台账，hook 无从知道它在跑。）
 
+> **★ T336 服务从「等待」里拆出来（2026-10-06，改这块前必读）**：上面「长驻 dev server 也一直显示等待」被推翻了 —— 实测 MySmoo 一个设计预览 http.server 把一行钉了 **6 天**青色「等待」，而用户的预览服务本来就是**故意留着**反复刷新看稿的（`/design-preview` 按项目名算端口）。「等待」的意思是「AI 会自己接着跑」，服务永远不会让 AI 醒，所以它不该算。判据：**外壳的子孙进程有没有在监听 TCP 端口**（`ServiceProbe.listeningPorts`，libproc `PROC_PIDFDSOCKETINFO`，读内核里本用户进程的 fd 表，**不开 socket、不碰网络 API**，build.sh 的不联网 gate 不受影响）。端口在**子孙**上不在外壳上（`zsh -c` → python；`npm run dev` 还要再下两层），所以有一个有界的树遍历（6 层 / 64 个进程）。监听的外壳 → `SessionRow.services`，**不进 `bgShells`**（不触发 await）；needs 路径照旧算它（批准 `expo start` 后起的外壳同样证明弹窗已答）。UI：行尾复用 `shell` 标签的槽位显示 `:端口`（靛蓝；会话 done/idle/paused 且 state 文件 >1 天没动 → 琥珀「可能忘关」，只提示不自动关），每个服务是**它所在项目卡片最底下的一行**（`ServiceCell.swift`，`DisplayItem.service`，由 `ListModel.appendServices` 在每组末尾追加）：`:端口 类型 · 开了多久 [· 可能忘关了]` + 打开 / 停止。**按项目分、不集中放**（用户 2026-10-06 推翻了初版「列表底部一条总托盘」）；折叠项目时一起收起，悬停项目时随卡片一起浮起。「停止」= SIGTERM 监听进程 + 外壳的直接子进程，1.5s 后还活着就 SIGKILL；外壳随之退出，Claude Code 的后台任务收到 exit 143。设计稿 `design/background-services-3-proposals.html` 方案 1。**已知取舍**：「会不会自己退出」事先判断不了 —— 一个**临时**起 web server 的测试命令（Playwright 的 `webServer`、e2e）跑着的时候会被当成服务，行显示完成 + `:端口` 而不是等待；`npx expo run:ios` 不算误判（编完继续挂着 Metro，本来就不会自己退）。**冻结闸门仍看全部外壳（含服务）**：只看非服务外壳的话，跑超 10 分钟、自带 web server 的前台 e2e 会被误判成暂停（code review 抓到，2026-10-06 已改回）。
+
 `run_in_background:true` 的 Bash 命令（`npx expo run:ios` 之类）：Bash 立即返回 → 主回合秒 Stop → 涂 done（绿），随后 startup 重连/stale 可能再降级成 idle（灰）。但命令的外壳 `zsh -c 'source …/shell-snapshots/…snapshot.sh 2>/dev/null || <cmd>'` 作为 **`claude` 的直接子进程**一直活到命令结束——hook 侧没有任何「还在跑」的信号（`PostToolUse` 已发、`Stop` 已发）。
 
-- 判据：done/idle 行调 `runningToolShells(since: 0)`——**丢掉时刻守卫**（后台命令外壳启动早于 done，用 needs 那套「启动晚于 mtime」会把它挡掉）。done/idle 无待答弹窗，不存在「残留外壳 vs 新弹窗」的歧义，所以有活外壳 = 真在跑 → **强制 `await`（★T312；T54 时是 `done`，更早是 `working`）**，done 与 stale-idle 两路统一读作「等它自己回来」。
-- 防误判：`since=0` 会放行任何长驻 `sh -c`（比如某些 `sh -c server` 起的 MCP server）。用 **`shell-snapshots/` 签名**收窄——只有 Claude Code Bash 工具外壳（前台/后台都）会 source shell-snapshot，MCP server 不会。该签名要求加在 `runningToolShells` 里对 needs 路径也是纯增益（Bash 工具外壳必带签名）。
+- 判据：done/idle 行调 `commandShells` 的全部外壳（不过时刻守卫）——**丢掉时刻守卫**（后台命令外壳启动早于 done，用 needs 那套「启动晚于 mtime」会把它挡掉）。done/idle 无待答弹窗，不存在「残留外壳 vs 新弹窗」的歧义，所以有活外壳 = 真在跑 → **强制 `await`（★T312；T54 时是 `done`，更早是 `working`）**，done 与 stale-idle 两路统一读作「等它自己回来」。
+- 防误判：`since=0` 会放行任何长驻 `sh -c`（比如某些 `sh -c server` 起的 MCP server）。用 **`shell-snapshots/` 签名**收窄——只有 Claude Code Bash 工具外壳（前台/后台都）会 source shell-snapshot，MCP server 不会。该签名要求加在 `commandShells` 里对 needs 路径也是纯增益（Bash 工具外壳必带签名）。
 - 自我修正：命令结束外壳消失 → 下次 refresh 探测返回 0 → done 行副标题消失（bgShells 归 0）。
-- **★ 必须标出「有 N 个后台命令在跑」（「以为是在卡」bug 的修复，T312 后依旧）**：这条路径的 await 行**没有 hook step**（`Stop` 已 `rm step-<tty>`），只剩 `⏱ 时长` —— 一个不说在干嘛的行读起来像「没事发生」，青色本身只说「在等」、不说等多久。故 `runningToolShells` 返回 **`(count, oldest)`**（不是 bool）→ `SessionRow.bgShells` / `bgShellsSince` → `MainWindow` 在 step 为空且 `bgShells>0` 时合成副标题 **`▸ 后台命令 · N 个 shell 运行中 · <时长>`**（对齐 Claude Code 自己的 "N shells still running"；时长 = `now - oldest`，即最早那个外壳的存活时间，`oldest == 0` 时省略这一段），**门控 `hasStep` 按 `bgShells > 0` 放行**（不看状态；T54 前只在 working 渲染）。计数只在 done/idle 分支采集（那里本来就要扫）。〔T312 顺手删了标题右侧的 `shell` 字条：等待行的药丸已经在说同一件事，字条只剩 `bash`（前台命令在跑的 working 行）。〕
+- **★ 必须标出「有 N 个后台命令在跑」（「以为是在卡」bug 的修复，T312 后依旧）**：这条路径的 await 行**没有 hook step**（`Stop` 已 `rm step-<tty>`），只剩 `⏱ 时长` —— 一个不说在干嘛的行读起来像「没事发生」，青色本身只说「在等」、不说等多久。故探测保留 **数量 + 最早启动时刻**（不是 bool）→ `SessionRow.bgShells` / `bgShellsSince` → `MainWindow` 在 step 为空且 `bgShells>0` 时合成副标题 **`▸ 后台命令 · N 个 shell 运行中 · <时长>`**（对齐 Claude Code 自己的 "N shells still running"；时长 = `now - oldest`，即最早那个外壳的存活时间，`oldest == 0` 时省略这一段），**门控 `hasStep` 按 `bgShells > 0` 放行**（不看状态；T54 前只在 working 渲染）。计数只在 done/idle 分支采集（那里本来就要扫）。〔T312 顺手删了标题右侧的 `shell` 字条：等待行的药丸已经在说同一件事，字条只剩 `bash`（前台命令在跑的 working 行）。〕
 - **★ daemon idle 不得把它判成暂停**（改判定链前必读）：主回合已结束、后台命令还在跑时，daemon 的 `sessions/<pid>.json` 就是 **`idle`**（合法，不是中断），daemon 判定链里 `idle + status==working → paused` 本会把它翻成洋红「暂停」。`bgShells>0` 已强制 `await`（不再 working），天然进不到这条 needs/working 分支；`bgShells == 0` 守卫作为**兜底**保留，双保险绝不把在跑的后台命令读成暂停。
 - 局限：副标题报**数量 + 已跑多久**，但不报具体是什么命令（外壳里的真实命令没抽）；后台命令的时长/token 不单独计入统计（同 subagent 台账局限）。
 
@@ -303,7 +310,8 @@ if status == "working",
 
 - `sessionStatus(tty:)` — 读 state 文件
 - `fetchRows()` — 组装每行。顺序固定：`needs` 行调探测覆盖为 working → done/idle 行调 `since=0` 探测，有活外壳则**强制 `await`（★T312，不是 working 也不是 done）**并留下计数 → **最后**跑 daemon 三分支覆盖
-- `runningToolShells(claudePid:since:)` — 忙碌探测 + 时刻守卫（核心）；要求外壳带 `shell-snapshots/` 签名；**返回 `(count, oldest)` 元组** —— `count` 是符合条件的外壳个数（0 = 没在跑），`oldest` 是其中最早的启动时刻，供副标题算「已跑多久」
+- `commandShells(kind:claudePid:)` — 列出全部 Bash 工具外壳（要求 `shell-snapshots/` 签名、存活 ≥1s），**每行只扫一次**（★T336 前是 `runningToolShells` 一行扫三次）；`fetchRows` 自己套时刻守卫：needs 用 `start > needs 写入时刻`，await 用不监听端口的那部分（`plainShells`），冻结闸门用全部
+- `ServiceProbe.scan(shell:…)`（`ServiceProbe.swift`）— 外壳子孙里有没有监听端口；有 → 服务（端口 · 类型 · pid），没有 → 普通后台命令
 - `daemonSessionStatus(_ pid:)` — 读 daemon 的 `sessions/<pid>.json`，**返回 `(status, updatedAt)` 元组**（`updatedAt` 由毫秒转秒，用来和 state 文件 mtime 比新旧）
 - `childPIDs(_:)` — libproc `PROC_PPID_ONLY` 取直接子进程
 - `processStartEpoch(_:)` / `fileMTime(_:)` — 时刻对比两端

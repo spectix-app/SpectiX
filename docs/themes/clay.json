@@ -70,17 +70,21 @@
       "dark" : "#4A453F",
       "light" : "#D4CEC2"
     },
+    "modelFable" : {
+      "dark" : "#F5A35C",
+      "light" : "#B0601A"
+    },
     "modelHaiku" : {
-      "dark" : "#F0B866",
-      "light" : "#A87616"
+      "dark" : "#8FD6A0",
+      "light" : "#3E8A55"
     },
     "modelOpus" : {
       "dark" : "#B39DF8",
       "light" : "#7A63C4"
     },
     "modelSonnet" : {
-      "dark" : "#5AD1C8",
-      "light" : "#2E8C86"
+      "dark" : "#7FB0F5",
+      "light" : "#3A6FB8"
     },
     "proAccent" : {
       "dark" : "#EDBB5C",

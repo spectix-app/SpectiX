@@ -36,7 +36,7 @@ enum ThemeFile {
         ("shellTagAccent", \.shellTagAccent), ("agentSegmentFill", \.agentSegmentFill),
         ("agentSeam", \.agentSeam), ("proAccent", \.proAccent),
         ("claudeOrange", \.claudeOrange), ("usageGreen", \.usageGreen),
-        ("modelOpus", \.modelOpus), ("modelSonnet", \.modelSonnet), ("modelHaiku", \.modelHaiku),
+        ("modelFable", \.modelFable), ("modelOpus", \.modelOpus), ("modelSonnet", \.modelSonnet), ("modelHaiku", \.modelHaiku),
     ]
 
     static let statusKeys: [(String, WritableKeyPath<ThemeStatusPalette, NSColor>)] = [

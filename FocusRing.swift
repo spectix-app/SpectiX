@@ -1044,7 +1044,7 @@ final class TerminalFocusRing {
         // No pin for this row's number: fall back to the manifest, the same permissive
         // check paneOwner makes — with several sessions sharing one name every candidate
         // "matches", which here costs at most one extra tick of a held overlay.
-        guard let pids = loadManifestNameToPid()[normalize(ident.title)],
+        guard let pids = manifestPids(ident, in: loadManifestNameToPid()),
               pids.contains(target) else { return nil }
         return (strip, ident.index)
     }
@@ -1074,7 +1074,7 @@ final class TerminalFocusRing {
     // list, i.e. the old permissive behavior, which the caller pairs with the token.
     private func paneOwner(_ textarea: AXUIElement, window: CGWindowID?) -> [pid_t]? {
         guard let ident = paneIdentity(of: textarea) else { return nil }
-        guard let pids = loadManifestNameToPid()[normalize(ident.title)],
+        guard let pids = manifestPids(ident, in: loadManifestNameToPid()),
               !pids.isEmpty else { return nil }
         if pids.count > 1, let index = ident.index, let window,
            let pinned = paneIdentityCache[window]?[index], pids.contains(pinned) {
@@ -2275,7 +2275,7 @@ final class TerminalFocusRing {
             // single candidate (see windowManifest). Pin by title-set first, so a window
             // nobody ever clicked into can still resolve (see pinWindowManifest).
             pinWindowManifest(c.wid, axTitles: textareas.compactMap {
-                paneIdentity(of: $0).map { normalize($0.title) }
+                paneIdentity(of: $0).map { PaneLabel.key(for: $0.label, in: manifests.merged) ?? normalize($0.label) }
             }, byFile: manifests.byFile)
             let table = windowManifest[c.wid].flatMap { manifests.byFile[$0] } ?? manifests.merged
             absorb(resolvePanes(textareas, statusByPid: statusByPid, nameToPid: table,
@@ -2338,25 +2338,6 @@ final class TerminalFocusRing {
         return nil
     }
 
-    // "Terminal 5 ◐ jx 0270 …" / "终端 5 ◐ …" — the row's accessibility description. Same
-    // two halves as a pane's (see PaneIdentity): the number is VSCode's terminal
-    // instanceId and the rest is the tab name. No trailing "Run the command" here, so it
-    // gets its own parse rather than sharing paneIdentity's.
-    private func tabRowIdentity(_ desc: String) -> PaneIdentity? {
-        let t = desc.trimmingCharacters(in: .whitespaces)
-        for prefix in ["Terminal ", "终端 ", "终端"] {
-            guard t.lowercased().hasPrefix(prefix.lowercased()) else { continue }
-            var rest = String(t.dropFirst(prefix.count))
-            let digits = rest.prefix(while: { $0.isNumber })
-            guard let index = Int(digits) else { continue }
-            rest = String(rest.dropFirst(digits.count))
-            if rest.hasPrefix("，") || rest.hasPrefix(",") { rest.removeFirst() }
-            let title = rest.trimmingCharacters(in: .whitespaces)
-            return title.isEmpty ? nil : PaneIdentity(index: index, title: title)
-        }
-        return nil
-    }
-
     // Re-read every cached tab strip. `fresh` says whether this read is entitled to be
     // treated as the whole truth — false before any deep pass has found a strip, because
     // "no rows" would then be indistinguishable from "never looked", and a caller that
@@ -2388,7 +2369,7 @@ final class TerminalFocusRing {
                       let ident = tabRowIdentity(desc),
                       let rect = axFrame(row), rect.width > 2, rect.height > 2,
                       rect.intersects(bounds),
-                      let pids = table[normalize(ident.title)], !pids.isEmpty else { continue }
+                      let pids = manifestPids(ident, in: table), !pids.isEmpty else { continue }
                 let live = pids.filter { statusByPid[$0] != nil }
                 guard let pid = resolveOwner(index: ident.index,
                                              candidates: live.isEmpty ? pids : live,
@@ -2418,7 +2399,7 @@ final class TerminalFocusRing {
         for ta in textareas {
             guard let frame = paneFrame(fromTextarea: ta),
                   let ident = paneIdentity(of: ta) else { continue }
-            guard let pids = nameToPid[normalize(ident.title)], !pids.isEmpty else { continue }
+            guard let pids = manifestPids(ident, in: nameToPid), !pids.isEmpty else { continue }
             // Sessions we have a live status for are the only ones worth ringing; fall
             // back to the raw list so a pane whose session just appeared still resolves
             // when it is the only candidate.
@@ -2583,7 +2564,7 @@ final class TerminalFocusRing {
             // leaves a single candidate (see windowManifest). Pin by title-set first, so
             // a window nobody ever clicked into can still resolve (see pinWindowManifest).
             pinWindowManifest(c.wid, axTitles: textareas.compactMap {
-                paneIdentity(of: $0).map { normalize($0.title) }
+                paneIdentity(of: $0).map { PaneLabel.key(for: $0.label, in: manifests.merged) ?? normalize($0.label) }
             }, byFile: manifests.byFile)
             let table = windowManifest[c.wid].flatMap { manifests.byFile[$0] } ?? manifests.merged
             let found = resolvePanes(textareas, statusByPid: statusByPid, nameToPid: table,
@@ -2889,7 +2870,7 @@ final class TerminalFocusRing {
         guard let focus = focusedTerminalGroupsContainer(axApp),
               let ident = paneIdentity(of: focus.textarea), let index = ident.index,
               let window = focusedWindowID(axApp),
-              let pids = loadManifestNameToPid()[normalize(ident.title)],
+              let pids = manifestPids(ident, in: loadManifestNameToPid()),
               pids.contains(shellPid) else { return }
         paneIdentityCache[window, default: [:]][index] = shellPid
         panePinsDirty = true
@@ -3071,74 +3052,31 @@ final class TerminalFocusRing {
         return nil
     }
 
-    // What VSCode's accessibility label says a pane IS: "终端 N，<title> 运行命令"
-    // (or "Terminal N, <title> Run the command: …"). Both halves matter and the number is
-    // NOT decoration — see paneIdentityCache for why the title alone is not an
-    // identity.
-    private struct PaneIdentity {
-        /// The "终端 N" number = VSCode's terminal instanceId. Unique within its
-        /// window and stable for that terminal's whole life. nil when the label
-        /// carries no number (unknown locale / older VSCode).
-        let index: Int?
-        /// The tab name, tail stripped. Still needs normalize() before matching.
-        let title: String
-    }
+    // A pane's identity, read from the textarea's AXDescription. The parse lives in
+    // PaneLabel.swift (pinned by tools/pane-label-check.sh) — read its ★ before touching
+    // how the label is cut: VSCode rewrites the wording, the manifest names don't drift.
+    private typealias PaneIdentity = PaneLabel.Identity
 
-    // ★ This tail is VSCode's wording, and VSCode CHANGES it (改这里前必读). It read
-    // "<title> run command" for years; by 2026-08 it reads "<title> Run the command:
-    // Toggle Screen Reader Accessibility Mode …". Nothing announces the change — the
-    // parse simply returns nil for every pane, no pane resolves an owner, and every
-    // feature built on pane identity (rings, pips, pane-level jump) silently degrades
-    // to "only the pane you just clicked is known". Measured on the day it broke: the
-    // deep sweep found 8 panes across 4 windows and named 0 of them.
-    // So: match case-insensitively, ADD new spellings rather than replacing old ones
-    // (older VSCode builds are still out there), and order longest-first so a prefix
-    // never shadows the longer form it lives inside.
-    private static let paneDescTails = [" 运行命令", " run the command", " run command"]
-
-    // A pane's identity, read from the textarea's AXDescription. Present only when the
-    // desc carries one of the tails above (idle/stale panes lack it). The leading status
-    // glyph is stripped later by normalize().
     private func paneIdentity(of textarea: AXUIElement) -> PaneIdentity? {
         guard let desc = copyAttr(textarea, kAXDescriptionAttribute) as? String else { return nil }
-        guard let tail = Self.paneDescTails
-                .compactMap({ desc.range(of: $0, options: .caseInsensitive) })
-                .min(by: { $0.lowerBound < $1.lowerBound }) else { return nil }
-        var head = String(desc[desc.startIndex..<tail.lowerBound])
-        var index: Int?
-        if let comma = head.range(of: "，") ?? head.range(of: ", ") {
-            let digits = head[head.startIndex..<comma.lowerBound]
-                .components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
-            index = Int(digits)
-            head = String(head[comma.upperBound...])
-        }
-        let title = head.trimmingCharacters(in: .whitespaces)
-        return title.isEmpty ? nil : PaneIdentity(index: index, title: title)
+        return PaneLabel.pane(desc)
+    }
+
+    private func tabRowIdentity(_ desc: String) -> PaneIdentity? {
+        PaneLabel.tabRow(desc)
     }
 
     private func paneTitle(of textarea: AXUIElement) -> String? {
-        paneIdentity(of: textarea)?.title
+        paneIdentity(of: textarea)?.label
     }
 
-    // Canonical form for matching pane titles to manifest names: trim, then drop a
-    // single leading status glyph (spinner ⠂…, ✳ etc. — any leading char that's
-    // neither alphanumeric nor CJK).
+    // The shellPids a label names in `names` (normalize()d manifest keys).
+    private func manifestPids(_ ident: PaneIdentity, in names: [String: [pid_t]]) -> [pid_t]? {
+        PaneLabel.key(for: ident.label, in: names).flatMap { names[$0] }
+    }
+
     private func normalize(_ s: String) -> String {
-        var t = s.trimmingCharacters(in: .whitespaces)
-        if let first = t.unicodeScalars.first,
-           !CharacterSet.alphanumerics.contains(first), !isCJK(first) {
-            t.removeFirst()
-            t = t.trimmingCharacters(in: .whitespaces)
-        }
-        return t
-    }
-
-    private func isCJK(_ u: UnicodeScalar) -> Bool {
-        switch u.value {
-        case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0x3000...0x303F,
-             0xFF00...0xFFEF, 0x2E80...0x2EFF: return true
-        default: return false
-        }
+        PaneLabel.normalize(s)
     }
 
     // MARK: Pane identity — which session owns THIS pane
@@ -3191,16 +3129,12 @@ final class TerminalFocusRing {
     private func loadPanePinsIfNeeded() {
         guard !panePinsLoaded else { return }
         panePinsLoaded = true
-        guard let data = FileManager.default.contents(atPath: panePinsPath),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Int]]
-        else { return }
-        for (w, pins) in obj {
-            guard let wid = UInt32(w) else { continue }
-            for (i, pid) in pins {
-                guard let index = Int(i) else { continue }
+        guard let data = FileManager.default.contents(atPath: panePinsPath) else { return }
+        for (wid, pins) in PanePins.decode(data) {
+            for (index, pid) in pins {
                 // Live learning wins over the disk copy.
                 if paneIdentityCache[CGWindowID(wid), default: [:]][index] == nil {
-                    paneIdentityCache[CGWindowID(wid), default: [:]][index] = pid_t(pid)
+                    paneIdentityCache[CGWindowID(wid), default: [:]][index] = pid
                 }
             }
         }
@@ -3209,13 +3143,7 @@ final class TerminalFocusRing {
     private func savePanePinsIfDirty() {
         guard panePinsDirty else { return }
         panePinsDirty = false
-        var obj: [String: [String: Int]] = [:]
-        for (wid, pins) in paneIdentityCache {
-            var m: [String: Int] = [:]
-            for (i, pid) in pins { m[String(i)] = Int(pid) }
-            obj[String(wid)] = m
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: obj) {
+        if let data = PanePins.encode(paneIdentityCache) {
             try? data.write(to: URL(fileURLWithPath: panePinsPath), options: .atomic)
         }
     }

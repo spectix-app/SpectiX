@@ -430,6 +430,11 @@ enum BreakLook {
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 1, green: 0.45, blue: 0.38, alpha: 1) : tomatoDeep
     }
+    /// The working chip figure, same reason as overInk.
+    static let workInk = NSColor(name: nil) { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 1, green: 0.62, blue: 0.52, alpha: 1) : tomatoDeep
+    }
 
     /// ★ The pale surfaces (work / rest / rested) are FIXED light colours in both
     /// appearances, so their text must be fixed dark too. `.labelColor` flips to white
@@ -527,7 +532,7 @@ final class BreakChip: NSView {
             fill = BreakLook.leaf.withAlphaComponent(0.14); ink = BreakLook.leaf
         case .working:
             text = "🍅 " + BreakReminder.clock(r.displaySec(now: now) ?? 0)
-            fill = BreakLook.tomato.withAlphaComponent(0.14); ink = BreakLook.tomatoDeep
+            fill = BreakLook.tomato.withAlphaComponent(0.14); ink = BreakLook.workInk
         case .overtime:
             text = "🍅 " + BreakReminder.clock(r.displaySec(now: now) ?? 0)
             // Red on a pale tomato wash, not white on solid red: in the title bar the

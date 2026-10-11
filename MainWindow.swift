@@ -136,7 +136,7 @@ final class LogoBadge: NSView {
     // the icon's *file name*, not an NSImage: Mode is Equatable so configure can skip
     // redundant redraws, and NSImage would break that (and retain a bitmap per mode).
     enum Mode: Equatable {
-        case vscode, cursor, windsurf, terminal, desktop, status(String)
+        case vscode, cursor, windsurf, terminal, desktop
         case custom(String)   // emoji
         case image(String)    // file name under AppSettings.iconsDir
     }
@@ -271,10 +271,6 @@ final class LogoBadge: NSView {
         case .windsurf: return Recipe(colors: windsurfColors, monogram: "WS")
         case .terminal: return Recipe(colors: termColors, symbol: "terminal")
         case .desktop:  return Recipe(colors: claudeColors, symbol: "asterisk")
-        case .status(let s):
-            let a = Status.accent(s)
-            return Recipe(colors: [a.blended(withFraction: 0.18, of: .white) ?? a,
-                                   a.blended(withFraction: 0.22, of: .black) ?? a])
         case .custom(let e): return Recipe(colors: neutralTile, emoji: e)
         case .image(let f): return Recipe(colors: neutralTile, image: AppSettings.iconImage(f))
         }
@@ -749,7 +745,7 @@ final class MainWindowController: NSWindowController {
     /// the window's own title row plays that part, so the pill belongs to the
     /// window and the shared header is purely the 2×2 metric grid.
     private let countPill = CountPill()
-    private let breakChip = BreakChip()   // "🍅 48:12", left of the counts (BreakReminder)
+    private let breakChip = BreakChip()   // "🍅 48:12", left end of the title row (BreakReminder)
     // The 2×2 metric grid (CPU / memory over session / weekly quota), identical to
     // the popover's.
     private let statsHeader = HeaderStatsView()
@@ -1021,10 +1017,9 @@ final class MainWindowController: NSWindowController {
             // metric grid. Kept here so the row reads "who I am … what's running".
             countPill.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -Theme.pad),
             countPill.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            countPill.leadingAnchor.constraint(greaterThanOrEqualTo: versionLabel.trailingAnchor, constant: 10),
-            breakChip.trailingAnchor.constraint(equalTo: countPill.leadingAnchor, constant: -8),
+            countPill.leadingAnchor.constraint(greaterThanOrEqualTo: breakChip.trailingAnchor, constant: 10),
+            breakChip.leadingAnchor.constraint(equalTo: versionLabel.trailingAnchor, constant: 10),
             breakChip.centerYAnchor.constraint(equalTo: countPill.centerYAnchor),
-            breakChip.leadingAnchor.constraint(greaterThanOrEqualTo: versionLabel.trailingAnchor, constant: 10),
 
             statsHeader.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: Theme.pad),
             statsHeader.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -Theme.pad),
@@ -1382,7 +1377,6 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
                 case .desktop:  logoBadge.configure(.desktop)
                 }
             }
-        case .status(let s):    logoBadge.configure(.status(s))
         }
         countPill.configure(counts: counts)
         countPill.isHidden = counts.isEmpty || isEmptyProject
@@ -1920,9 +1914,6 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
         let meta: NSAttributedString
         if idleSolo {
             meta = NSAttributedString()
-        } else if AppSettings.sortMode == .status {
-            let proj = r.projectName
-            meta = Self.prefixProject(proj, base)
         } else {
             meta = base
         }
@@ -1996,6 +1987,7 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
         // the pill only says it is waiting — see the branch below for why the word came
         // back. Desktop rows have no hook data at all → never tagged.
         let cmdTag: String
+        var tagTint = Theme.shellTagAccent
         if !AppSettings.showShellBadge || r.isDesktop {
             cmdTag = ""
         } else if r.status == "working", r.step == "Bash" || r.step.hasPrefix("Bash ·") {
@@ -2010,6 +2002,13 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
             // 「在等待什么？我没有看到有 shell 的标记」). The tag is served FIRST in that
             // budget, so it is the only thing that survives a narrow row.
             cmdTag = "shell"
+        } else if let svc = r.services.first {
+            // A server this session left up (T336). It no longer makes the row 等待, so
+            // the tag is what links the row to its server row at the bottom of this
+            // project's card. One port only: the slot is budgeted for ~6 characters
+            // (shellSlotW); the server rows list them all.
+            cmdTag = ":\(svc.port)"
+            tagTint = svc.stale ? ServiceCell.staleAccent : ServiceCell.accent
         } else {
             cmdTag = ""
         }
@@ -2026,7 +2025,7 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
             // to it or flatly contradict the row it sits on. A hue outside the status
             // palette says 「这是在等一条命令」 without claiming to be a state. Filled AND
             // outlined — a borderless wash vanishes into the glass at this size.
-            let tint = Theme.shellTagAccent
+            let tint = tagTint
             shellTag.configure(text: cmdTag, textColor: tint,
                                fill: tint.withAlphaComponent(0.22),
                                border: tint.withAlphaComponent(0.48))
@@ -2179,18 +2178,6 @@ final class ChildCell: NSTableCellView, HandleProviding, Hoverable {
             ? Status.accent(status) : NSColor.tertiaryLabelColor
         return NSAttributedString(string: text, attributes: [
             .foregroundColor: color, .font: Theme.rounded(10.5, .medium)])
-    }
-
-    // "api · ⏱ 3m · 12k" — prefix the owning project name (status-group mode, where
-    // sessions from different projects share one bucket). The name reads as a subtle
-    // label ahead of the existing meta content.
-    static func prefixProject(_ name: String, _ rest: NSAttributedString) -> NSAttributedString {
-        // With every metric switched off there is nothing to separate — the name stands
-        // alone rather than trailing a dangling "· ".
-        let out = NSMutableAttributedString(string: rest.length == 0 ? name : name + " · ", attributes: [
-            .foregroundColor: NSColor.secondaryLabelColor, .font: Theme.rounded(10.5, .semibold)])
-        out.append(rest)
-        return out
     }
 
     // "▸ Edit · main.swift" — the live tool step, tinted with the working accent so it

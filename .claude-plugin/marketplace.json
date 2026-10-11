@@ -1,0 +1,16 @@
+{
+  "name": "spectix",
+  "owner": {
+    "name": "SpectiX Lab",
+    "email": "hello@spectix.app",
+    "url": "https://spectix.app"
+  },
+  "description": "Status hooks for the SpectiX macOS menu bar app.",
+  "plugins": [
+    {
+      "name": "spectix",
+      "source": "./plugin",
+      "category": "productivity"
+    }
+  ]
+}

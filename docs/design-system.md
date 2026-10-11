@@ -104,6 +104,8 @@
 
 **每个会话状态只有一个颜色源：`Status.accent(_:)`（`Theme.swift`）。** 所有状态色都从它派生，禁止在别处硬编码状态色：
 
+> **服务行的两档色（T336，2026-10-06）**：后台服务（监听端口的后台命令）**不是状态**，所以刻意不用任何状态色 —— 靛蓝 `ServiceCell.accent`（#9FA8DA / 浅色 #5361B5）表示「开着一个服务」，琥珀 `ServiceCell.staleAccent`（#E0A84A / #A8670C）表示「会话一天没动，可能忘关了」。两处用到：行尾 `:端口` 字条、项目卡片底部的服务行（`ServiceCell`）。按钮悬停时「打开」借运行蓝、「停止」借需确认红，只在悬停时出现，平时是中性描边。
+
 > **第七个状态「等待」（`await`，T312，2026-09-10）**：青 #00BFA5 / 深 #008074。色相刻意卡在完成绿（151°）和运行蓝（199°）之间——它就是两者的中间态（后台命令在跑、AI 会自己续、期间你可插话）。**它是全 App 唯一的空心圆点**（`StatusDot.buildAwait`）：实心 = 有人在忙或有事轮到你，空心 = 都没有，只是在等；缺口环 4s 一转说「没结束、也不急」。compact 小点（菜单栏胶囊、计数药丸）退化成不转的闭合空心圈。**药丸和其它状态一样实心**（2026-09-12 用户拍板推翻初版的描边药丸——一行里只有圆点该承担「空心 = 在等」这层意思，药丸跟着空一次，整行就散了）：走 `Status.pillStyle` 的通用路径，玻璃主题实心青底白字、陶土主题浅底深字。选型过程与另外 19 个落选方案在 `design/waiting-status-10-proposals.html`。别给第二个状态用空心圆点——这处形状差异是它的全部识别度。
 
 - `Status.tint(_:)` = `accent × 0.18`（药丸浅底），自动跟随。
@@ -127,7 +129,8 @@
   | **`NSPanel .contentView = 新视图`** | **+15.04** |
 
   还有一条量不进表里、但在真机上占比最大的：**每次新建控件并插进窗口**（`NSControl viewDidMoveToWindow` / `NSView _setSuperview:` / `NSTextFieldCell _refreshVisualProviderForStyle:` 这条链）AppKit 都会登记一个不释放的依赖对象，实测本 App 稳态约 **35 个/秒**。所以「列表重载时整批重建单元格」「高亮圈尺寸一变就重建 contentView」这类写法是有持续代价的 —— 已登记为 **T318**，别当成菜单栏那条的残留。
-  查法：`tools/menubar-leak-probe.sh <秒数>` 挂到在跑的 App 上看总速率，`tools/appkit-write-leak-probe/main.swift` 判断某一种写法该不该上定时器。
+  **T318 已修（2026-10-11）**：`SessionListView.reload` 在行形状不变（行数相同、每行种类相同）时**原地重配已有单元格**，不再 `reloadData`（它会把每个可见单元格拆下再插回窗口）；`CountPill` 复用已有的点和数字标签；行视图 `TransparentRowView` 走 `makeView` 回收。离屏实测：修前每次 reload 漏 **2746** 个依赖对象，修后 **0.15**。行形状变了（展开/折叠、增删会话）仍走 `reloadData`，那是事件驱动、不是每秒一次。**改列表刷新路径后跑 `./tools/list-leak-probe.sh`**（离屏、不需要在跑的 App，超过 1 个/次 reload 就 exit 1）。高亮圈的 `contentView` 重建没动：它们只在状态/标题/尺寸真的变了时才重建（`refreshLiveCaption` 有守卫），不是稳态来源。
+  查法：`tools/menubar-leak-probe.sh <秒数>` 挂到在跑的 App 上看总速率，`tools/list-leak-probe.sh` 离屏验列表刷新，`tools/appkit-write-leak-probe/main.swift` 判断某一种写法该不该上定时器。
 
 **全局 override**：`AppSettings.userColor(for:)` / `setUserColor(_:for:)`（存 `ringColor-<status>` hex，键名沿用旧 ring 色以兼容存量）。`Status.accent` **先查 override 再回落默认**，所以用户改一个状态色 → 上述所有面一起变。setter 发 `didChange` → `main.refresh()` 全量重建列表/header/菜单栏 + `FocusRing` recolor always-on 圈。
 

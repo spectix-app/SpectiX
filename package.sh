@@ -26,7 +26,7 @@ cd "$(dirname "$0")"
 APP="SpectiX.app"
 INSTALLER="installer/build/Install SpectiX.app"
 NAME="SpectiX"
-VERSION="1.11"
+VERSION="1.12"
 ZIP="$NAME-$VERSION.zip"
 # Deliberately still "taskbeacon": this names a credential the user stored once with
 # `notarytool store-credentials`, not anything the recipient ever sees. Renaming it
@@ -95,6 +95,10 @@ for f in "Contents/Resources/$APP/Contents/MacOS/$NAME" \
          "Contents/Resources/vscode-extension/package.json"; do
   [ -e "$INSTALLER/$f" ] || { echo "✖ installer is missing $f — can't package."; exit 1; }
 done
+
+# 2b. Same reason: audit the payload (license, leaks, extension == working tree)
+#     while a FAIL still costs nothing.
+tools/release-check.sh "$INSTALLER" || { echo "✖ release-check failed — can't package."; exit 1; }
 
 if [ "$NOTARIZED" = "1" ]; then notarize "$INSTALLER"; fi
 

@@ -719,14 +719,16 @@ final class TerminalStatusPips {
             }
         }
 
-        for (key, pip) in panes where !hidden.contains(key) {
-            guard let showing = selectedByWindow[pip.hostWindow], showing != key.pid else { continue }
-            let coincides = panes.contains { other in
-                other.key != key && other.value.hostWindow == pip.hostWindow
-                    && abs(other.value.axRect.minX - pip.axRect.minX) < Self.stackSlop
-                    && abs(other.value.axRect.minY - pip.axRect.minY) < Self.stackSlop
+        // Also hides a hidden tab whose memo went stale after an in-window relayout and
+        // now merely OVERLAPS the shown pane instead of coinciding with it (T328).
+        for window in Set(panes.values.map { $0.hostWindow }) {
+            let rects = Dictionary(uniqueKeysWithValues: panes
+                .filter { $0.value.hostWindow == window && !hidden.contains($0.key) }
+                .map { ($0.key.pid, $0.value.axRect) })
+            for pid in PipStack.hiddenInWindow(panes: rects, showing: selectedByWindow[window],
+                                               slop: Self.stackSlop) {
+                hidden.insert(PipKey(pid: pid, kind: .pane))
             }
-            if coincides { hidden.insert(key) }
         }
 
         // Front-to-back by host window; anything ① already buried is out of the running.

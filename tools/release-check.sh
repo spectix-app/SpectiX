@@ -47,7 +47,7 @@ echo "bundle id: ${BUNDLE_ID:-?}   架构: $(lipo -archs "$BIN" 2>/dev/null || e
 # is the verbatim FSL text, and the no-network promise lives in the README
 # instead of a license clause. Both are what the site and the bundle point at,
 # so both must still be there.
-head_ "[1/2] LICENSE 与不联网承诺"
+head_ "[1/2] LICENSE、不联网承诺与扩展副本"
 
 if [ ! -f LICENSE ]; then
   fail "LICENSE 文件不存在"
@@ -72,6 +72,21 @@ for readme in README.md opensource/overlay/README.md; do
     fail "$readme 缺「## Privacy: no network」一节 —— build.sh 的报错和官网都指向它"
   fi
 done
+
+# The installer carries its own copy of the editor extension, taken from the working
+# tree whenever build-installer.sh last ran. Edit extension.js afterwards and the
+# package silently ships the old one — nothing else compares the two.
+# Only the installer bundle carries it; the bare app has no extension to compare.
+EXT_DIR="$APP/Contents/Resources/vscode-extension"
+if [ -d "$EXT_DIR" ]; then
+  for f in extension.js package.json; do
+    if cmp -s "vscode-extension/$f" "$EXT_DIR/$f"; then
+      pass "包内 vscode-extension/$f 与工作区一致"
+    else
+      fail "包内 vscode-extension/$f 与工作区同名文件不一致 —— 包是旧的，重跑 ./package.sh"
+    fi
+  done
+fi
 
 # ── [2] LEAK ─────────────────────────────────────────────────────────────────
 # grep -ra over the whole bundle on purpose: it covers the binary's string table,

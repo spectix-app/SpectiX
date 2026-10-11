@@ -169,12 +169,14 @@ enum ThemeClay {
             // `.usage .t` → `--primary-deep`, the design's mint.
             usageGreen:   themePick(dark: themeRGB(0.651, 0.871, 0.765),    // #A6DEC3
                                     light: themeRGB(0.306, 0.620, 0.478)),  // #4E9E7A
+            modelFable:   themePick(dark: themeRGB(0.961, 0.639, 0.361),    // #F5A35C
+                                    light: themeRGB(0.690, 0.376, 0.102)),  // #B0601A
             modelOpus:    themePick(dark: themeRGB(0.702, 0.616, 0.973),    // #B39DF8
                                     light: themeRGB(0.478, 0.388, 0.769)),  // #7A63C4
-            modelSonnet:  themePick(dark: themeRGB(0.353, 0.820, 0.784),    // #5AD1C8
-                                    light: themeRGB(0.180, 0.549, 0.525)),  // #2E8C86
-            modelHaiku:   themePick(dark: themeRGB(0.941, 0.722, 0.400),    // #F0B866
-                                    light: themeRGB(0.659, 0.463, 0.086))   // #A87616
+            modelSonnet:  themePick(dark: themeRGB(0.498, 0.690, 0.961),    // #7FB0F5
+                                    light: themeRGB(0.227, 0.435, 0.722)),  // #3A6FB8
+            modelHaiku:   themePick(dark: themeRGB(0.561, 0.839, 0.627),    // #8FD6A0
+                                    light: themeRGB(0.243, 0.541, 0.333))   // #3E8A55
         ),
 
         // Softer, rounder than the glass theme — clay's whole read is "pressed out

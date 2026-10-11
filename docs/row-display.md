@@ -79,7 +79,7 @@
   - **整行去重（T191，别删）**：`StatsStore.parse` 逐行入库前先按整行哈希过一道 `seenLines`。**字节完全相同的两行 = 同一个事件被记了两次**（连 token 数都一样），来源是「两个 hook 同时接线」那种窗口期（改名 SpectiX 期间 4780 行里有 493 行重复），读取端拦不住写入端，只能拒绝计它。T180 把历史文件合并去重过一次，这道闸管的是**新产生的**重复。`seenLines` 必须和 `cachedEvents`/`cachedBytes` **一起**清空（增量解析只看新追加的字节，忘了清就会在文件被截断/换路径后把重写的行全当「见过」吞掉）。
   2. **fallback**（该会话日志里没有 token 字段时）：`~/.claude.json` 的 `projects.<cwd>.lastTotal*Tokens` 求和。局限：按**项目 cwd** 键控、只存最近一个 session 的累计值——同目录兄弟 session 显示同一个项目总量；全新 folder 暂显 0。
   - 表头合计（`Components.swift` `totalsText`）：exact 行逐行相加；fallback 行按 cwd 去重，且**跳过已有 exact 行的 cwd**（项目总量涵盖了 exact 会话的消耗，混加会重复计数）。
-- **逐行 context 占用 %（行右侧的 `N%` 徽章/量条）**：占用 = hook 写的 `ctx-<tty>`（最后一条 assistant 消息的 input 侧，0 = 无 transcript / 刚 /clear），窗口上限 = `main.swift` `ctxLimit(for:)`（按 cwd 走祖先链查 `.claude.json` 的 `lastModelUsage`，`[1m]→1M / 否则 200k`）。`ctxPct`：`ctxTokens==0 → 0%`；否则 `ctxTokens / limit`。徽章的隐藏（desktop / idle）在**消费端 `MainWindow` `ChildCell.configure`** 处理（`pct = -1`），`ctxPct` 自身永远给真实数字。**「未启动就隐藏」已在 T75 取消**——它误伤了首回合被打断的 `paused` 行；现在 `showMetrics` 只认 desktop 和 idle 两个隐藏理由，%/量条/模型/`⏱·◆` 四样共用它。
+- **逐行 context 占用 %（行右侧的 `N%` 徽章/量条）**：占用 = hook 写的 `ctx-<tty>`（最后一条 assistant 消息的 input 侧，0 = 无 transcript / 刚 /clear），窗口上限 = `main.swift` `ctxLimit(for:)`（按 cwd 走祖先链查 `.claude.json` 的 `lastModelUsage`，`[1m]` 或原生 1M 模型→1M、否则 200k；判定在 `ContextWindow.swift`——列的是「哪些是 200k」（Haiku、5 以前各代、裸 Opus 5 / Sonnet 5 这个封闭的旧集合），新模型默认 1M，不用每出一个新模型就补名单；`./tools/context-window-check.sh` 钉住）。`ctxPct`：`ctxTokens==0 → 0%`；否则 `ctxTokens / limit`。徽章的隐藏（desktop / idle）在**消费端 `MainWindow` `ChildCell.configure`** 处理（`pct = -1`），`ctxPct` 自身永远给真实数字。**「未启动就隐藏」已在 T75 取消**——它误伤了首回合被打断的 `paused` 行；现在 `showMetrics` 只认 desktop 和 idle 两个隐藏理由，%/量条/模型/`⏱·◆` 四样共用它。
   - **关键坑（2026-07-24 修）**：新版 Claude Code **不再逐项目写 `.claude.json` 的 `lastModelUsage`**（6/7 项目是 `{}`，连 `lastTotal*Tokens` 都归 0），祖先链一路 miss 返回 0，旧 `ctxPct` 在 `ctxLimit==0` 时返回 -1 → **凡是已抓到 context 的行（ctxTokens>0）徽章全消失**，而刚开、没抓到 context 的行反而显示 `0%`（诡异对比：同样运行中，A 项目有 %、B 项目没有）。
   - **为什么不能在 hook 端按 model 推 limit**：transcript 的 `message.model` = `claude-opus-4-8`（**不带 `[1m]`**），`[1m]`（1M context 档）是 Claude Code CLI 层标注，transcript / env / settings 都不可靠携带 → hook 端根本判不出 tier，硬推只会把 1M 会话全写成 200k（% 大 5 倍、超 200k 直接 clamp 100%）。
   - **修法（纯 App 端）**：① `ctxLimit(for:)` 祖先链 miss 后**回退账号默认**——`.claude.json` 唯一可靠残留是全局 `~/.claude` bootstrap 目录那条 `lastModelUsage`（带真实 tier）；只要 `byCwd` 里**有任一 1M 项**就判定账号有 1M 权限、未知 cwd 一律默认 1M，否则 200k，全空才 0。② `ctxPct` 在 `limit==0` 时**按占用反推**：`>200k 必是 1M，否则按 200k`，保证**永不隐藏**。这样 1M 用户所有会话默认 1M（正确），200k 用户默认 200k，超 200k 的占用铁定判 1M。
@@ -154,7 +154,7 @@ stack 会替它的成员设这一行，手写约束不会。`MetricLine` 里的 
 三条实现决定，改之前先看：
 
 - **外框是 `QuotaTrio` 的第一个子视图，不是 `QuotaTrio` 自己的 layer。** 把 strip 本身 `wantsLayer = true` 之后（2026-09-04 实测，探针见 git 历史）Auto Layout 只跑一遍：`apply()` 在 `layout()` 里重新分配完宽度，**第二遍 layout 不再来**，三张卡 frame 全是 0×0、内容从 x=0 溢出画在一起。strip 保持普通视图，那一遍就回来了。
-- **竖线由每张卡自己画在自己 leading 边外侧 `seamOffset` 处**（`MetricCard.seamless` / `showsLeadingSeam`），不画在外框上：线的位置是列间距的一半，挤的时候间距归零它得跟着回到边缘，卡自己画最直接。（原先还有第二个理由 —— hover 重新分配宽度带动画，外框上的线跟不上；那套 hover 变宽 2026-09-10 已删，见下一节。）
+- **竖线由每张卡自己画在自己 leading 边外侧 `seamOffset` 处**（`MetricCard.showsLeadingSeam` / `seamOffset`），不画在外框上：线的位置是列间距的一半，挤的时候间距归零它得跟着回到边缘，卡自己画最直接。（原先还有第二个理由 —— hover 重新分配宽度带动画，外框上的线跟不上；那套 hover 变宽 2026-09-10 已删，见下一节。）
 - **挤不下时先牺牲间距**（`apply()` 里 gap 归零，seam 跟着回到边缘）。列有 required 的最小宽，硬塞会让 Auto Layout 放弃宽度约束、三列按固有宽度叠在一起——popover 比主窗口窄 ~100pt，正是这里撞上的。
 
 ### 倒计时常驻 + hover 变宽 3:1（2026-09-10 / 09-11，用户定）
@@ -238,6 +238,7 @@ agent 节点从来就是会话行**同一个 enclosure** 的切片（`.middle` /
   - 判定只在 `layout()` 里做（`configure()` 跑在还没定尺寸的复用 cell 上，且窗口 resize 不会重新 configure）；`configure()` 只记 `wantsShell` 意图，末尾顺手跑一次。翻转前比 `shellShown` 防抖——这段每个 layout pass 都跑，约束不能反复重设。
   - 曾经试过**堆叠到 pill 下方**（不占横向）：pill 得上抬 9pt 才居中，字条出现/消失时整个 pill 上下跳，用户判「不好看」，已撤。
 - **样式 = 复用 `AgentTag`**（0.22 底 + 0.48 描边的同一个配方），尺寸小一号（9.5 / 15 / 6）——它和状态 pill 共处一条边，同尺寸会读成「两个 pill」。**色用蓝 `Theme.shellTagAccent`**（2026-08-26 用户定，此前是中性冷灰 `Theme.agentNeutralAccent`——灰得几乎看不见）。⚠️ **是它自己的一档蓝，不是 `Status.accent("working")`**：字条和状态 pill 共处一条边，借状态色会和旁边的 pill 撞成两颗一样的东西。所以它走 palette 里的独立 token（`ThemeSpec.shellTagAccent`，两个主题各给一档，**明暗分开取**——同一个蓝不可能既在暗底上够亮又在亮底上够深），不参与用户的状态色 override。这条规矩本身没变：状态色仍然只归 pill。
+- **★ 第三种字：`:端口`（T336，2026-10-06）**：会话名下有**服务**（后台命令的进程在监听端口，见 `docs/session-status.md` ★T336）且没有后台 shell 在跑时，同一个槽位显示 `:9685`。**只放一个端口**——槽位按 `shellSlotW = 52` 预算，约 6 个字符，所有服务都在项目卡片最底下的服务行里列出。色不用 `shellTagAccent`，用 `ServiceCell.accent`（靛蓝 #9FA8DA / 浅色 #5361B5）；会话 >1 天没动 → `ServiceCell.staleAccent`（琥珀 #E0A84A / #A8670C，「可能忘关」）。优先级：`bash`（前台命令）> `shell`（后台命令，等待）> `:端口`。384pt 的弹窗里槽位不够会整条不画（同 `shell`），那时服务只在项目卡片底下的服务行里看得到。
 - **不进步骤列的宽度地板**：`applyStepRoom()` 的 `room` 故意不减这个字条的宽度。地板只能是「窗口宽 + 全局设置」的函数（见上文），而字条是**逐行**的——算进去会出现「同一窗口宽度下 A 行有步骤列 B 行没有」。窄窗口下字条挤到步骤列时，由 `stepLabel.trailing ≤ shellTag.leading` 让步骤自己截断，这和 🤖 徽章挤它时的处理一致。
 - **设置页预览**：`PreviewSessions` 第一行（working + `Bash · git push`）出 `bash`；第三行是 `await` + `bgShells: 1`，展示的是「等待」状态本身，不再出字条。
 
@@ -250,7 +251,7 @@ usage 行的**最后一列** = 该会话**当前用的模型**（`SessionRow.mod
 - **开关**：设置「显示」段 →「模型标签」（`AppSettings.showModelLabel`，默认开）。关掉 → chip 收成零宽，那 70pt 让给 `▸ 工具步骤`。整列开关总表见开头「每列的开关」。
 - **desktop 行也有模型胶囊**（`showModel = showMetrics || r.isDesktop`，`MainWindow.swift`）：⏱/◆/% 对桌面版都是假的（没有 hook、没有 token 数据），但模型是**直接从那个窗口自己的模型选择器读出来的**（`main.swift` `axFindModel`，按 wid 缓存、30s 一刷；两种写法 `Model  Opus 5` / `Model: Opus 5 High` 都要认）。所以这一格对桌面版是真的，别跟着别的度量一起关掉。桌面版为什么没有用量数据见 [`desktop-app.md`](./desktop-app.md)。
 
-**颜色 = 模型族语义色**（`Status.modelTint(_:)`，按 label 首个单词判族）：**Opus 紫 `#b39df8`** / **Sonnet 青 `#5ad1c8`** / **Haiku 琥珀 `#f0b866`**（深色值取自设计页第二轮；浅色模式同 `claudeOrange`/`usageGreen` 的做法用同色系加深版）。**认不出的族回落中性灰**，绝不借用三色之一——这三个颜色是「这是哪个族」的断言，把未知模型涂成紫的等于说谎。这三色不是会话状态色，**不进** `Status.accent` override 体系。
+**颜色 = 按价位分档，照游戏道具稀有度**（`Status.modelTint(_:)`，按 label 首个单词判族，T309 用户定）：**Fable / Mythos 橙** > **Opus 紫** > **Sonnet 蓝** > **Haiku 绿** > **认不出的灰**（`.systemGray`）。越贵越靠前，新出更贵的族就往橙那档挂。灰必须是真灰——以前回落 `.secondaryLabelColor`，浅色下看着是黑的，Fable 没有自己那档时就显示成黑色。认不出的族绝不借用四色之一——颜色是「这是哪一档」的断言，把未知模型涂成紫的等于说谎。这几色不是会话状态色，**不进** `Status.accent` override 体系。
 
 - **三级来源，优先实时**（`main.swift` `fetchRows`）：
   1. **首选（T76 加，实时）**：**直接 tail 该 tty 的 transcript**——hook 每次事件把 payload 的 `transcript_path` 写进 `tp-<tty>`（`atomic_write`，一行路径），App 在 `liveModelKey(tty:)` 里读文件**尾部 256KB**、反向找**最后一条非 sidechain** 的 `"model":"claude-…"`。`/model` 切换只要产生一条 assistant 消息就反映出来（一次刷新内，2.5s 轮询或 hook 写文件触发的 FSEvent，**不用等回合结束**），新 tab 第一次回复就有标签。

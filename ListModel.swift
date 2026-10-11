@@ -7,22 +7,16 @@ import Cocoa
 // badges) followed by one indented child per terminal. A lone session is just a
 // header with a single child — keeps the layout uniform.
 // What a header groups by. Project headers are keyed by cwd (a VSCode window / the
-// desktop app) and support raise-on-click, hide, and drag-reorder. Status headers
-// are keyed by a status bucket and are collapse-only (a bucket spans many windows,
-// so there's no single window to raise or project to hide).
+// desktop app) and support raise-on-click, hide, and drag-reorder.
 enum HeaderKind: Equatable {
     case project(cwd: String)
-    case status(String)         // bucket key: "needs" / "done" / "working" / "idle"
 
-    // Stable key for the collapse set (cwds and buckets never collide — buckets
-    // carry a "status:" prefix).
+    // Stable key for the collapse set.
     var collapseKey: String {
         switch self {
         case .project(let cwd): return cwd
-        case .status(let s):    return "status:" + s
         }
     }
-    // The project cwd when this is a project header; nil for status buckets.
     var projectCwd: String? {
         if case .project(let c) = self { return c }
         return nil
@@ -33,6 +27,7 @@ enum DisplayItem {
     case header(folder: String, kind: HeaderKind, counts: [(String, Int)], collapsed: Bool)
     case child(SessionRow)                                        // session under a header
     case agent(AgentInfo, parent: SessionRow)                     // expanded sublist node under a child
+    case service(ServiceInfo, cwd: String)                        // a server left running, at its group's bottom (T336)
 
     var isHeader: Bool { if case .header = self { return true }; return false }
     var isAgent: Bool { if case .agent = self { return true }; return false }
@@ -55,10 +50,10 @@ enum HeaderSource { case vscode, cursor, windsurf, terminal, desktop }
 // change (status only recolors). A drag-reorder layers a custom rank on top:
 // reordered folders/children sort by their saved rank; everything else keeps the
 // base order, slotted after the ranked items.
-// Status mode (AppSettings.sortMode): group by status bucket instead of by project
-// — 需确认 → 完成 → 运行中 → 闲置. Sessions from different projects mix under one
-// bucket (each child surfaces its project name). Empty buckets are omitted; drag-
-// reorder is disabled (MainWindow gates dragging to .custom).
+// Status mode (AppSettings.sortMode): still grouped by project, but each project's
+// sessions sort by status (AppSettings.statusDisplayOrder, then session number) —
+// within the project only, never across projects (user, T307). Child drag-reorder
+// is disabled (MainWindow gates dragging to .custom) since status owns child order.
 final class ListModel {
     private(set) var rows: [SessionRow] = []
     // Projects whose VSCode window is open but which have no live session (see
@@ -191,16 +186,10 @@ final class ListModel {
         return out
     }
 
-    func items() -> [DisplayItem] {
-        switch AppSettings.sortMode {
-        case .custom: return projectItems()
-        case .status: return statusItems()
-        }
-    }
-
     // Group by VSCode window (cwd): folders alphabetical with the user's drag rank
-    // layered on top, children by session number (or custom child order).
-    private func projectItems() -> [DisplayItem] {
+    // layered on top, children by session number (or custom child order), or by
+    // status in status mode.
+    func items() -> [DisplayItem] {
         var groups: [String: [SessionRow]] = [:]
         for r in rows { groups[r.cwd, default: []].append(r) }
         // An open VSCode window with no session becomes an empty group — same cwd key as
@@ -221,9 +210,19 @@ final class ListModel {
             out.append(.header(folder: folder, kind: .project(cwd: key),
                                counts: g.isEmpty ? [("idle", 0)] : Self.counts(g),
                                collapsed: isCollapsed))
-            if !isCollapsed { for s in g { out.append(.child(s)); appendAgents(s, to: &out) } }
+            if !isCollapsed {
+                for s in g { out.append(.child(s)); appendAgents(s, to: &out) }
+                appendServices(g, to: &out)
+            }
         }
         return out
+    }
+
+    // The servers this group's sessions left running, as the last rows of its card —
+    // each project's servers under its own title, not pooled in one place (user,
+    // 2026-10-06). Collapsing the group hides them with its sessions.
+    private func appendServices(_ g: [SessionRow], to out: inout [DisplayItem]) {
+        for s in g { for svc in s.services { out.append(.service(svc, cwd: s.cwd)) } }
     }
 
     // The expanded agent sublist right under its session row — one .agent node per
@@ -241,47 +240,17 @@ final class ListModel {
         else { agentExpanded.insert(tty) }
     }
 
-    // Group by status bucket: 需确认 → 完成 → 运行中 → 闲置. Empty buckets are omitted;
-    // within a bucket, sessions sort by project then session number.
-    private func statusItems() -> [DisplayItem] {
-        var groups: [String: [SessionRow]] = [:]
-        for r in rows { groups[Self.bucket(r.status), default: []].append(r) }
-
-        var out: [DisplayItem] = []
-        for key in AppSettings.statusDisplayOrder {
-            guard let g0 = groups[key], !g0.isEmpty else { continue }
-            let g = g0.sorted { a, b in
-                a.cwd == b.cwd ? a.seq < b.seq : a.cwd < b.cwd
-            }
-            let isCollapsed = collapsed.contains("status:" + key)
-            out.append(.header(folder: Self.bucketLabel(key), kind: .status(key),
-                               counts: [(key, g.count)], collapsed: isCollapsed))
-            if !isCollapsed { for s in g { out.append(.child(s)); appendAgents(s, to: &out) } }
-        }
-        return out
-    }
-
-    // seen + idle collapse into the one gray "闲置" bucket; paused is its own bucket.
-    private static func bucket(_ s: String) -> String {
-        switch s { case "needs", "done", "paused", "await", "working": return s; default: return "idle" }
-    }
-    private static func bucketLabel(_ key: String) -> String {
-        switch key {
-        case "needs":   return L("确认", "Wait")
-        case "done":    return L("完成", "Done")
-        case "paused":  return L("暂停", "Held")
-        case "await":   return L("等待", "Hold")
-        case "working": return L("运行", "Busy")
-        default:        return L("闲置", "Idle")
-        }
-    }
-
     // The folder's sessions in display order (custom child order, else by seq).
     func orderedSessions(_ cwd: String) -> [SessionRow] {
         sortedSessions(rows.filter { $0.cwd == cwd }, cwd: cwd)
     }
 
     private func sortedSessions(_ g: [SessionRow], cwd: String) -> [SessionRow] {
+        if AppSettings.sortMode == .status {
+            let rank = AppSettings.statusDisplayOrder
+            let r = { (s: SessionRow) in rank.firstIndex(of: Status.bucket(s.status)) ?? rank.count }
+            return g.sorted { a, b in r(a) == r(b) ? a.seq < b.seq : r(a) < r(b) }
+        }
         if let ord = childOrder[cwd] {
             return g.sorted { a, b in ranked(a.tty, b.tty, in: ord) { _, _ in a.seq < b.seq } }
         }
@@ -333,8 +302,7 @@ final class ListModel {
 
     // MARK: Collapse
 
-    // A project cwd with sessions and every one of them idle/seen. Status buckets
-    // (keyed "status:…") are never all-idle — they follow the manual `collapsed` set.
+    // A project cwd with sessions and every one of them idle/seen.
     private func allIdle(_ cwd: String) -> Bool {
         let g = rows.filter { $0.cwd == cwd }
         return !g.isEmpty && g.allSatisfy { $0.status == "idle" || $0.status == "seen" }
@@ -367,24 +335,15 @@ final class ListModel {
     }
 
     // Expand the group holding `pid`'s session so its child row is visible (used when
-    // the user focuses a terminal — the list reveals + highlights that session). The
-    // collapse key follows the active grouping: custom → cwd, status → "status:"+bucket.
+    // the user focuses a terminal — the list reveals + highlights that session).
     // Returns true only if a collapsed group was actually opened, so the caller can skip
     // a needless re-layout when nothing moved.
     func expandGroup(containingShellPid pid: pid_t) -> Bool {
         guard let row = rows.first(where: { $0.shellPid == pid }) else { return false }
-        switch AppSettings.sortMode {
-        case .custom:
-            let key = row.cwd
-            guard isCollapsed(key) else { return false }
-            if allIdle(key) { idleExpanded.insert(key) } else { collapsed.remove(key) }
-            return true
-        case .status:
-            let key = "status:" + Self.bucket(row.status)
-            guard collapsed.contains(key) else { return false }
-            collapsed.remove(key)
-            return true
-        }
+        let key = row.cwd
+        guard isCollapsed(key) else { return false }
+        if allIdle(key) { idleExpanded.insert(key) } else { collapsed.remove(key) }
+        return true
     }
 
     // While a header drag is in flight, collapse every folder so the user reorders a

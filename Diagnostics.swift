@@ -96,6 +96,114 @@ enum CompanionExtension {
     }
 }
 
+// "Did the last run end without a clean quit?" One running-<pid> file per live process,
+// written at launch and removed in applicationWillTerminate. A file whose pid is dead
+// at the next launch means that process never reached terminate (crash, kill -9, hang
+// force-quit, power loss).
+//
+// ★ Per-pid, not one shared file: the dev build and the release build share this state
+// dir and can run side by side, so a single file would be overwritten by whichever
+// launched last and cleared by whichever quit first.
+// ★ Local only: the prompt copies text and opens a browser page. Nothing is sent by
+// the binary (CLAUDE.md「红线：App 二进制不联网」).
+enum LaunchSentinel {
+    struct Unclean {
+        let pid: pid_t
+        let started: Date
+    }
+
+    private static let prefix = "running-"
+    private static var ownPath: String {
+        "\(CompanionExtension.stateDir)/\(prefix)\(getpid())"
+    }
+
+    /// Consumes every sentinel left by a dead process and plants our own. Returns the
+    /// newest unclean exit, if any.
+    static func arm() -> Unclean? {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: CompanionExtension.stateDir, withIntermediateDirectories: true)
+        let files = (try? fm.contentsOfDirectory(atPath: CompanionExtension.stateDir)) ?? []
+        var found: [Unclean] = []
+        for f in files where f.hasPrefix(prefix) {
+            guard let pid = pid_t(f.dropFirst(prefix.count)), pid != getpid(),
+                  !CompanionExtension.hostAlive(pid) else { continue }
+            let path = "\(CompanionExtension.stateDir)/\(f)"
+            let started = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            found.append(Unclean(pid: pid, started: started ?? .distantPast))
+            try? fm.removeItem(atPath: path)
+        }
+        fm.createFile(atPath: ownPath, contents: Data())
+        let last = found.max { $0.started < $1.started }
+        if let last { log("unclean previous run pid=\(last.pid) started=\(stamp(last.started))") }
+        return last
+    }
+
+    static func disarm() {
+        try? FileManager.default.removeItem(atPath: ownPath)
+    }
+
+    /// `pkill` / `kill` send SIGTERM, which by default ends an AppKit process without
+    /// ever calling applicationWillTerminate — the rebuild-and-reopen routine in
+    /// CLAUDE.md would then report a "crash" on every relaunch. Route it to a normal quit.
+    /// ★ Delivered through the main run loop's common modes, not the main queue: the
+    /// main queue is not drained while an NSAlert runs modal (this very prompt), so a
+    /// SIGTERM sent then was never handled and the process had to be kill -9'd — which
+    /// re-armed the prompt for the next launch.
+    static func treatSigtermAsQuit() {
+        signal(SIGTERM, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+        src.setEventHandler {
+            let main = CFRunLoopGetMain()
+            CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
+                if NSApp.modalWindow != nil { NSApp.abortModal() }
+                NSApp.terminate(nil)
+            }
+            CFRunLoopWakeUp(main)
+        }
+        src.resume()
+        sigtermSource = src
+    }
+    private static var sigtermSource: DispatchSourceSignal?
+
+    static func prompt(_ u: Unclean) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("SpectiX 上次没有正常退出", "SpectiX didn't quit cleanly last time")
+        alert.informativeText = L(
+            "上次运行（\(stamp(u.started)) 启动）意外结束了。可以复制一份本地诊断信息，到 GitHub 开个 issue 贴进去。诊断信息只在你这台机器上生成，不会自动发送。",
+            "The previous run (started \(stamp(u.started))) ended unexpectedly. You can copy a local diagnostics report and paste it into a GitHub issue. The report is built on this Mac and is never sent anywhere by SpectiX.")
+        alert.addButton(withTitle: L("复制诊断信息", "Copy Diagnostics"))
+        alert.addButton(withTitle: L("打开 GitHub issue 页", "Open GitHub Issue"))
+        alert.addButton(withTitle: L("忽略", "Ignore"))
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            let text = "Previous run pid \(u.pid), started \(stamp(u.started)), ended without a clean quit.\n"
+                + DiagnosticsReport.build()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        case .alertSecondButtonReturn:
+            if let url = URL(string: "\(AboutCard.sourceURL)/issues/new") { NSWorkspace.shared.open(url) }
+        default:
+            break
+        }
+    }
+
+    private static func log(_ s: String) {
+        let path = "\(CompanionExtension.stateDir)/launch-sentinel.log"
+        let line = "\(stamp(Date())) \(s)\n"
+        if let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: Data(line.utf8))
+        }
+    }
+
+    private static func stamp(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f.string(from: d)
+    }
+}
+
 // The "export diagnostics" file: everything a remote reader needs to tell apart the
 // failures that all look like "the ring doesn't show" — permission dead, extension not
 // on disk, on disk but not loaded, loaded but the pane never confirmed — plus the

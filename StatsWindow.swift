@@ -238,7 +238,7 @@ final class StatsPane: NSView {
         cc.addSubview(heatTitle)
         let heatCap = NSTextField(labelWithString: L("过去 26 周", "Last 26 weeks"))
         heatCap.font = Theme.font(10.5, .regular)
-        heatCap.textColor = .tertiaryLabelColor
+        heatCap.textColor = .labelColor
         heatCap.translatesAutoresizingMaskIntoConstraints = false
         cc.addSubview(heatCap)
         heatmap.accent = Status.accent("done")
@@ -263,7 +263,7 @@ final class StatsPane: NSView {
         cc.addSubview(listStack)
 
         emptyLabel.font = Theme.font(12.5, .regular)
-        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.textColor = .labelColor
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         cc.addSubview(emptyLabel)
@@ -529,7 +529,7 @@ final class StatsPane: NSView {
     private static func subCaption() -> NSTextField {
         let f = NSTextField(labelWithString: "")
         f.font = Theme.font(10, .regular)
-        f.textColor = .tertiaryLabelColor
+        f.textColor = .labelColor
         f.lineBreakMode = .byTruncatingTail
         f.maximumNumberOfLines = 1
         // Below the document's width pin, so a long caption truncates instead of
@@ -541,7 +541,7 @@ final class StatsPane: NSView {
     private static func sectionLabel(_ s: String) -> NSTextField {
         let f = NSTextField(labelWithString: s)
         f.font = Theme.font(12, .semibold)
-        f.textColor = .secondaryLabelColor
+        f.textColor = .labelColor
         f.translatesAutoresizingMaskIntoConstraints = false
         return f
     }
@@ -553,7 +553,7 @@ final class StatsPane: NSView {
 
         let cap = NSTextField(labelWithString: caption)
         cap.font = Theme.font(11, .medium)
-        cap.textColor = .secondaryLabelColor
+        cap.textColor = .labelColor
         cap.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(cap)
         value.textColor = color
@@ -578,17 +578,17 @@ final class StatsPane: NSView {
     private func deltaString(_ cur: Int, _ prev: Int?) -> NSAttributedString {
         guard let prev, let cap = range.deltaCaption else {
             return NSAttributedString(string: L("累计", "Total"), attributes: [
-                .foregroundColor: NSColor.tertiaryLabelColor, .font: Theme.font(10, .regular)])
+                .foregroundColor: NSColor.labelColor, .font: Theme.font(10, .regular)])
         }
         let d = cur - prev
         let sign = d > 0 ? "+\(d)" : d < 0 ? "\(d)" : "±0"
         let color: NSColor = d > 0 ? Status.accent("done")
-                           : d < 0 ? Status.accent("needs") : .secondaryLabelColor
+                           : d < 0 ? Status.accent("needs") : .labelColor
         let out = NSMutableAttributedString()
         out.append(NSAttributedString(string: sign, attributes: [
             .foregroundColor: color, .font: Theme.rounded(10.5, .bold)]))
         out.append(NSAttributedString(string: " \(cap)", attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor, .font: Theme.font(10, .regular)]))
+            .foregroundColor: NSColor.labelColor, .font: Theme.font(10, .regular)]))
         return out
     }
 
@@ -622,7 +622,7 @@ final class StatsPane: NSView {
         // stay put and the title's truncation point doesn't jitter per row.
         let right = NSTextField(labelWithString: "")
         let rs = NSMutableAttributedString()
-        let muted = NSColor.secondaryLabelColor
+        let muted = NSColor.labelColor
         rs.append(NSAttributedString(string: "⏱ \(durStr)",
             attributes: [.foregroundColor: muted, .font: Theme.rounded(12, .semibold)]))
         rs.append(NSAttributedString(string: "   " + costStr,
@@ -659,7 +659,7 @@ final class StatsPane: NSView {
     // Second line for a task: tokens + the model tag.
     private func taskUsageString(_ s: TaskRun) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        let muted = NSColor.secondaryLabelColor, faint = NSColor.tertiaryLabelColor
+        let muted = NSColor.labelColor, faint = NSColor.labelColor
         let numFont = Theme.rounded(11.5, .semibold), capFont = Theme.font(10.5, .regular)
         func num(_ s: String) { out.append(NSAttributedString(string: s, attributes: [.foregroundColor: muted, .font: numFont])) }
         func cap(_ s: String) { out.append(NSAttributedString(string: s, attributes: [.foregroundColor: faint, .font: capFont])) }
@@ -813,7 +813,7 @@ private final class HeatmapView: NSView {
         let maxV = Double(max(days.map { $0.tok }.max() ?? 1, 1))
         let empty = Theme.cardFill.cg(in: self)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(9, .regular), .foregroundColor: NSColor.tertiaryLabelColor]
+            .font: Theme.font(9, .regular), .foregroundColor: NSColor.labelColor]
 
         // Weekday gutter: label alternating rows, GitHub-style.
         for (row, s) in [(0, L("一", "M")), (2, L("三", "W")), (4, L("五", "F")), (6, L("日", "S"))] {
@@ -1031,7 +1031,7 @@ private final class SegmentBarView: NSView {
             NSColor.labelColor.withAlphaComponent(0.06).setFill(); rect.fill()
             let s = L("暂无配额数据", "No quota data") as NSString
             let a: [NSAttributedString.Key: Any] = [.font: Theme.font(10.5, .regular),
-                                                     .foregroundColor: NSColor.tertiaryLabelColor]
+                                                     .foregroundColor: NSColor.labelColor]
             let sz = s.size(withAttributes: a)
             s.draw(at: NSPoint(x: (bounds.width - sz.width) / 2, y: barY + (barH - sz.height) / 2), withAttributes: a)
             return
@@ -1126,7 +1126,7 @@ private final class QuotaCaption: NSView {
     private var usedStr: NSAttributedString? {
         guard let p = usedPct else { return nil }
         return NSAttributedString(string: L("已用 \(p)%", "Used \(p)%"),
-            attributes: [.font: Theme.font(10.5, .regular), .foregroundColor: NSColor.secondaryLabelColor])
+            attributes: [.font: Theme.font(10.5, .regular), .foregroundColor: NSColor.labelColor])
     }
     private var pillStr: NSAttributedString? {
         guard let p = usedPct else { return nil }
@@ -1211,7 +1211,7 @@ private final class RankRowView: NSView {
         vs.append(NSAttributedString(string: valueText, attributes: [
             .foregroundColor: NSColor.labelColor, .font: Theme.rounded(12, .bold)]))
         vs.append(NSAttributedString(string: " (\(Int((pct * 100).rounded()))%)", attributes: [
-            .foregroundColor: NSColor.tertiaryLabelColor, .font: Theme.font(10.5, .regular)]))
+            .foregroundColor: NSColor.labelColor, .font: Theme.font(10.5, .regular)]))
         val.attributedStringValue = vs
         val.setContentHuggingPriority(.required, for: .horizontal)
         val.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -1287,7 +1287,7 @@ private final class PagerRow: NSView {
 
         let counter = NSTextField(labelWithString: "\(page + 1) / \(pages)")
         counter.font = Theme.rounded(12, .semibold)
-        counter.textColor = .secondaryLabelColor
+        counter.textColor = .labelColor
         counter.alignment = .center
         counter.translatesAutoresizingMaskIntoConstraints = false
 

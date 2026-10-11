@@ -169,6 +169,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .header: return h + (e.offset == 0 ? Self.firstHeaderHeight : Self.headerHeight)
             case .child:  return h + 50
             case .agent:  return h + Theme.agentRowHeight
+            case .service: return h + ServiceCell.rowHeight
             }
         }
     }
@@ -182,12 +183,13 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         // applyPin still runs so a terminal-focus pin lands, but it's a cheap diff.
         guard key != lastRenderKey else { applyPin(); updateEdgeGlow(); return }
         lastRenderKey = key
+        let old = items
         items = newItems
         // Header-only groups (open VSCode windows with no session) count as content —
         // gate on the rendered items, not on `rows`, or the "no sessions" placeholder
         // would sit on top of them.
         emptyLabel.isHidden = !newItems.isEmpty
-        tableView.reloadData()
+        reloadRows(replacing: old)
         tableView.hoverDidReload()
         applyPin()
         updateEdgeGlow()
@@ -244,7 +246,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .child(let r):
                 let b = Status.bucket(r.status)
                 st = (b == "needs" || b == "done") ? b : nil
-            case .agent:
+            case .agent, .service:
                 st = nil
             }
             if st == "needs" { return "needs" }
@@ -271,6 +273,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
                 let fields: [String] = [
                     "C", r.status, r.taskTitle, String(r.seq), String(r.isDesktop), r.step,
                     String(r.bgAgents), String(r.bgShells),
+                    r.services.map { "\($0.port)\($0.stale)" }.joined(separator: ","),
                     UsageMetricsView.fmtDur(r.workSec), UsageMetricsView.fmtTok(r.ctxTokens), String(r.ctxPct),
                     r.model,
                     r.cwd, String(describing: r.terminalApp), String(isFirst), String(isLast),
@@ -305,6 +308,13 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
                     String(isLastNode), String(isLastRow),
                 ]
                 return fields.joined(separator: "¦")
+            case .service(let s, let cwd):
+                let isLastRow = i == items.count - 1 || items[i + 1].isHeader
+                // Uptime keyed coarsely, like every other clock in this key: a rebuild
+                // under the cursor would drop a click on 打开 / 停止.
+                let up = ServiceCell.uptime(Date().timeIntervalSince1970 - s.start)
+                return ["S", cwd, "\(s.ports)", s.kind, String(s.stale), up,
+                        String(isLastRow)].joined(separator: "¦")
             }
         }
     }
@@ -400,7 +410,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     private var selectableTargets: [KBTarget] {
         items.compactMap {
             switch $0 {
-            case .child, .agent:          return nil
+            case .child, .agent, .service: return nil
             case .header(_, let k, _, _): return .header(k.collapseKey)
             }
         }
@@ -439,7 +449,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     // Activate the keyboard selection — mirrors a mouse click on that row. A child jumps
     // to its session; a collapsed header behaves like a header-body click (project → jump
-    // into its most urgent session, status bucket → toggle collapse). Returns false when
+    // into its most urgent session). Returns false when
     // there's nothing to activate (so the caller can fall back, e.g. jump the first row).
     @discardableResult
     func activateKeyboardSelection() -> Bool {
@@ -450,7 +460,6 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             }) else { return false }
             switch kind {
             case .project(let cwd): jumpToPriority(cwd)
-            case .status:           toggleCollapse(kind.collapseKey)
             }
             return true
         }
@@ -519,7 +528,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         switch items[src] {
         case .header: reorderFolder(from: src, toRow: target)
         case .child:  reorderChild(from: src, toRow: target)
-        case .agent:  return false   // agent nodes are not draggable
+        case .agent, .service: return false   // sublist / server rows are not draggable
         }
         refreshItems()
         return true
@@ -539,8 +548,8 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             return min(max(proposed, h + 1), groupEnd(headerAt: h))
         case .header:
             return folderBoundaries().min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? proposed
-        case .agent:
-            return proposed   // unreachable — agent rows never start a drag
+        case .agent, .service:
+            return proposed   // unreachable — these rows never start a drag
         }
     }
 
@@ -619,24 +628,41 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         case .header: return row == 0 ? Self.firstHeaderHeight : Self.headerHeight
         case .child:  return 54
         case .agent:  return Theme.agentRowHeight
+        case .service: return ServiceCell.rowHeight
         }
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell: NSView
+        switch items[row] {
+        case .header:
+            let id = NSUserInterfaceItemIdentifier("header")
+            cell = (tableView.makeView(withIdentifier: id, owner: self) as? HeaderCell) ?? HeaderCell(id: id)
+        case .child:
+            let id = NSUserInterfaceItemIdentifier("child")
+            cell = (tableView.makeView(withIdentifier: id, owner: self) as? ChildCell) ?? ChildCell(id: id)
+        case .agent:
+            let id = NSUserInterfaceItemIdentifier("agent")
+            cell = (tableView.makeView(withIdentifier: id, owner: self) as? AgentCell) ?? AgentCell(id: id)
+        case .service:
+            let id = NSUserInterfaceItemIdentifier("service")
+            cell = (tableView.makeView(withIdentifier: id, owner: self) as? ServiceCell) ?? ServiceCell(id: id)
+        }
+        configureCell(cell, row: row)
+        return cell
+    }
+
+    @discardableResult
+    private func configureCell(_ view: NSView, row: Int) -> Bool {
         switch items[row] {
         case .header(let folder, let kind, let counts, let collapsed):
-            let id = NSUserInterfaceItemIdentifier("header")
-            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? HeaderCell) ?? HeaderCell(id: id)
-            // Status buckets have no project cwd → no source badge (the cell uses the
-            // bucket's .status tile); project headers get their group's derived source.
+            guard let cell = view as? HeaderCell else { return false }
             let source = kind.projectCwd.map { model.source(forCwd: $0) } ?? .vscode
             let pinned = kind.projectCwd.map { model.isPinned($0) } ?? false
             cell.configure(folder: folder, counts: counts, collapsed: collapsed, kind: kind, source: source, pinned: pinned,
                            isFirst: row == 0)
-            return cell
         case .child(let r):
-            let id = NSUserInterfaceItemIdentifier("child")
-            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? ChildCell) ?? ChildCell(id: id)
+            guard let cell = view as? ChildCell else { return false }
             // First child = the row above is a header (rounds nothing extra, skips the
             // between-rows line); last child = the row below is a header or end-of-list
             // (rounds the enclosure's bottom — an expanded agent sublist below extends
@@ -645,10 +671,8 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             let isLast = row == items.count - 1 || rowIsHeader(row + 1)
             cell.configure(r, isFirst: isFirst, isLast: isLast,
                            agentExpanded: model.isAgentExpanded(r.tty))
-            return cell
         case .agent(let a, let parent):
-            let id = NSUserInterfaceItemIdentifier("agent")
-            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? AgentCell) ?? AgentCell(id: id)
+            guard let cell = view as? AgentCell else { return false }
             // First node = the row above is the session row this sublist hangs under —
             // the boundary where the card's agent segment starts, so it draws the seam.
             let isFirstNode = row == 0 || !items[row - 1].isAgent
@@ -656,13 +680,49 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             let isLastRow = row == items.count - 1 || rowIsHeader(row + 1)
             cell.configure(a, parentStatus: parent.status, parentModel: parent.model,
                            isFirstNode: isFirstNode, isLastNode: isLastNode, isLastRow: isLastRow)
-            return cell
+        case .service(let s, _):
+            guard let cell = view as? ServiceCell else { return false }
+            cell.configure(s, isLastRow: row == items.count - 1 || rowIsHeader(row + 1))
         }
+        return true
+    }
+
+    // ★ T318: reloadData detaches every visible cell from the window and re-attaches
+    // it, and on macOS 26 each control re-entering a window registers an
+    // NSKeyValueDependency that is never freed (measured ~35/s steady state — the ⏱
+    // text alone changes the render key every second). When the row shapes are
+    // unchanged (same count, same kind per row → same heights and cell classes),
+    // reconfigure the cells already on screen instead. Rows scrolled off-screen have
+    // no view and get configured by viewFor when they come back.
+    private func reloadRows(replacing old: [DisplayItem]) {
+        let sameShape = old.count == items.count && zip(old, items).allSatisfy { a, b in
+            switch (a, b) {
+            case (.header, .header), (.child, .child), (.agent, .agent), (.service, .service): return true
+            default: return false
+            }
+        }
+        if sameShape {
+            // Every row view the table holds, not just the visible rect — it keeps a few
+            // prepared rows past the edges, and those would scroll in stale.
+            var inPlace = true
+            tableView.enumerateAvailableRowViews { rowView, row in
+                guard inPlace, row < items.count, let v = rowView.view(atColumn: 0) as? NSView else { return }
+                inPlace = configureCell(v, row: row)
+            }
+            if inPlace { return }
+        }
+        tableView.reloadData()
     }
 
     // No row-level selection background — the card owns its visuals.
+    // Recycled, not built per call: a fresh row view per row per reload is another
+    // view inserted into the window each time (T318).
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        TransparentRowView()
+        let id = NSUserInterfaceItemIdentifier("transparentRow")
+        if let v = tableView.makeView(withIdentifier: id, owner: self) as? TransparentRowView { return v }
+        let v = TransparentRowView()
+        v.identifier = id
+        return v
     }
 
     // Single click: jump to VSCode only. Status is NOT changed by the click — a row
@@ -696,6 +756,8 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             // An agent node jumps to its parent session — the terminal where the
             // wake-up will land.
             fireJump(parent)
+        case .service:
+            break   // its own buttons act; the row body has nowhere to jump
         case .header(_, let kind, _, _):
             let cell = tableView.view(atColumn: 0, row: r, makeIfNecessary: false) as? HeaderCell
             var onChevron = false
@@ -704,10 +766,6 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .project(let cwd):
                 // Chevron → collapse; anywhere else → jump into the folder's window.
                 if onChevron { toggleCollapse(kind.collapseKey) } else { jumpToPriority(cwd) }
-            case .status:
-                // A status bucket spans many windows — nothing to raise, so the whole
-                // header toggles collapse.
-                toggleCollapse(kind.collapseKey)
             }
         }
     }
@@ -773,16 +831,13 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         onLearned?("headerMenu")
         let menu = NSMenu()
         let display = AppController.isDesktopCwd(cwd) ? cwd : folder
-        // Pin-to-top: only in custom mode (status mode headers are buckets, not projects,
-        // and its order is fixed by urgency). Pinned folders float to the top of the list.
-        if AppSettings.sortMode == .custom {
-            let pinned = model.isPinned(cwd)
-            let pinTitle = pinned ? L("取消置顶", "Unpin") : L("置顶「\(display)」", "Pin \"\(display)\"")
-            let pin = NSMenuItem(title: pinTitle, action: #selector(pinClicked(_:)), keyEquivalent: "")
-            pin.target = self
-            pin.representedObject = ["cwd": cwd]
-            menu.addItem(pin)
-        }
+        // Pin-to-top: pinned folders float to the top of the list.
+        let pinned = model.isPinned(cwd)
+        let pinTitle = pinned ? L("取消置顶", "Unpin") : L("置顶「\(display)」", "Pin \"\(display)\"")
+        let pin = NSMenuItem(title: pinTitle, action: #selector(pinClicked(_:)), keyEquivalent: "")
+        pin.target = self
+        pin.representedObject = ["cwd": cwd]
+        menu.addItem(pin)
         let title = L("隐藏「\(display)」", "Hide \"\(display)\"")
         let item = NSMenuItem(title: title, action: #selector(hideClicked(_:)), keyEquivalent: "")
         item.target = self
@@ -825,6 +880,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .header(_, let k, _, _):  match = k.projectCwd == cwd
             case .child(let r):            match = r.cwd == cwd
             case .agent(_, let parent):    match = parent.cwd == cwd
+            case .service(_, let c):       match = c == cwd
             }
             if match, let rv = tableView.rowView(atRow: i, makeIfNecessary: false) { rowViews.append(rv) }
         }

@@ -73,9 +73,11 @@ func sheet(dark: Bool) -> NSImage {
     for (i, (_, segs)) in cases.enumerated() {
         let view = MenuCapsuleView()
         view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        // Same order as the app: counts first (at the stale init width), resize after.
+        // Sizing first hid a pulse dot parked at the old width (2026-09-18).
+        _ = view.apply(segs)
         let w = view.width(for: segs) + buttonPad
         view.frame = NSRect(x: 0, y: 0, width: w, height: 18)
-        _ = view.apply(segs)
         view.needsDisplay = true
         view.displayIfNeeded()
 

@@ -103,7 +103,7 @@ final class ImpactPanel: NSView {
         // Fixed order 省时 · 专注 · 连续 · 托管 · 掌控 · 工作 · 消耗 (2.4) — it is Metric's
         // declaration order, so the list can never drift out of step with the palette.
         inputTitle.font = Theme.font(10, .regular)
-        inputTitle.textColor = .tertiaryLabelColor
+        inputTitle.textColor = .labelColor
         inputTitle.translatesAutoresizingMaskIntoConstraints = false
         list.addSubview(inputTitle)
         var prev: NSView?
@@ -134,7 +134,7 @@ final class ImpactPanel: NSView {
         // 「点任意一行看它是什么意思」 — the detail sits far from the row that opens it
         // (D4), so without this nobody discovers the rows are clickable at all.
         hint.font = Theme.font(9.5, .regular)
-        hint.textColor = .tertiaryLabelColor
+        hint.textColor = .labelColor
         hint.alignment = .center
         hint.translatesAutoresizingMaskIntoConstraints = false
         list.addSubview(hint)
@@ -810,7 +810,7 @@ private final class MetricRow: NSView {
         // Appears on hover only, and goes away again once the row is open — by then the
         // detail card below is the affordance and a stale chevron just adds noise.
         chev.font = Theme.font(9, .regular)
-        chev.textColor = .tertiaryLabelColor
+        chev.textColor = .labelColor
         chev.alignment = .center
         chev.alphaValue = 0
 
@@ -970,7 +970,7 @@ private final class DetailCard: NSView {
         name.font = Theme.font(12, .bold)
         name.textColor = .labelColor
         big.font = Theme.roundedMono(13, .bold)
-        big.textColor = .secondaryLabelColor
+        big.textColor = .labelColor
         big.alignment = .right
         icon.imageScaling = .scaleProportionallyUpOrDown
 
@@ -1108,7 +1108,7 @@ private final class FactRow: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         label.font = Theme.font(10, .regular)
-        label.textColor = .secondaryLabelColor
+        label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         value.font = Theme.roundedMono(10, .bold)
@@ -1757,7 +1757,7 @@ final class SectionBlock: NSView {
 
     private func applyInk() {
         title.textColor = onDark ? accent : .labelColor
-        purpose.textColor = bed ? NeonInk.faint : .tertiaryLabelColor
+        purpose.textColor = bed ? NeonInk.faint : .labelColor
         summary.set(ink: onDark ? nil : .labelColor)
     }
 
@@ -2095,7 +2095,7 @@ enum ImpactFormat {
             // 全部 is one bucket. 「最佳」 would be this same number quoted back, which
             // reads as a comparison the panel never actually made.
             out.append(NSAttributedString(string: L("累计总量", "all-time total"),
-                attributes: [.font: small, .foregroundColor: NSColor.tertiaryLabelColor]))
+                attributes: [.font: small, .foregroundColor: NSColor.labelColor]))
             return out
         }
         if period.bucketsTracked < ImpactRule.newUserBuckets {
@@ -2103,18 +2103,18 @@ enum ImpactFormat {
             // as an achievement. The 「还需 N 周」 part is true of all five at once and is
             // said once in the section caption instead of five times down the column.
             out.append(NSAttributedString(string: L("首次记录", "first on record"),
-                attributes: [.font: small, .foregroundColor: NSColor.tertiaryLabelColor]))
+                attributes: [.font: small, .foregroundColor: NSColor.labelColor]))
             return out
         } else if v.isRecord {
             out.append(NSAttributedString(string: L("破纪录\n", "Record\n"), attributes: [
                 .font: bold, .foregroundColor: Metric.accent(v.metric)]))
             out.append(NSAttributedString(string: L("上一个 \(unitText(v.metric, v.priorBest, period))",
                                                     "was \(unitText(v.metric, v.priorBest, period))"),
-                attributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor]))
+                attributes: [.font: small, .foregroundColor: NSColor.labelColor]))
         } else {
             out.append(NSAttributedString(string: L("最佳 \(unitText(v.metric, v.best, period))",
                                                     "best \(unitText(v.metric, v.best, period))"),
-                attributes: [.font: small, .foregroundColor: NSColor.secondaryLabelColor]))
+                attributes: [.font: small, .foregroundColor: NSColor.labelColor]))
         }
         return out
     }
@@ -2257,9 +2257,9 @@ enum ImpactFormat {
 
     static func detailHow(_ m: Metric, _ w: PeriodImpact) -> NSAttributedString {
         let base: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(9.5, .regular), .foregroundColor: NSColor.tertiaryLabelColor]
+            .font: Theme.font(9.5, .regular), .foregroundColor: NSColor.labelColor]
         let hi: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(9.5, .semibold), .foregroundColor: NSColor.secondaryLabelColor]
+            .font: Theme.font(9.5, .semibold), .foregroundColor: NSColor.labelColor]
         let out = NSMutableAttributedString()
         func t(_ zh: String, _ en: String) { out.append(NSAttributedString(string: L(zh, en), attributes: base)) }
         func b(_ zh: String, _ en: String) { out.append(NSAttributedString(string: L(zh, en), attributes: hi)) }
@@ -2384,12 +2384,12 @@ enum ImpactFormat {
     static func foldSubline(_ w: PeriodImpact) -> NSAttributedString {
         let out = NSMutableAttributedString()
         let faint: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(9.5, .regular), .foregroundColor: NSColor.secondaryLabelColor]
+            .font: Theme.font(9.5, .regular), .foregroundColor: NSColor.labelColor]
 
         if let now = w.score.value, let prev = w.previousScore {
             let d = now - prev
             let color: NSColor = d > 0 ? Metric.accent(.saved)
-                               : d < 0 ? Status.accent("needs") : .secondaryLabelColor
+                               : d < 0 ? Status.accent("needs") : .labelColor
             out.append(NSAttributedString(string: d > 0 ? "↑ \(d)" : d < 0 ? "↓ \(-d)" : "±0",
                 attributes: [.font: Theme.roundedMono(9.5, .bold), .foregroundColor: color]))
             out.append(NSAttributedString(string: w.range.vsPrevious, attributes: faint))
@@ -2821,8 +2821,8 @@ enum NeonInk {
     // whole recipe would have to invert (dark ink on a light card) rather than be nudged.
     private static let base = NSColor(srgbRed: 0.965, green: 0.976, blue: 0.988, alpha: 1)
     static var primary: NSColor { base }
-    static var secondary: NSColor { base.withAlphaComponent(0.78) }
-    static var faint: NSColor { base.withAlphaComponent(0.54) }
+    static var secondary: NSColor { base }
+    static var faint: NSColor { base }
     /// Hairlines and gridlines drawn over the bed.
     static var rule: NSColor { base.withAlphaComponent(0.17) }
 }

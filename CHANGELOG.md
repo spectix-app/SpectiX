@@ -2,6 +2,26 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.12 — See the dev servers your sessions left running, and stop them (2026-10-11)
+
+Verified on Claude Code 2.1.296.
+
+### New
+
+- **Background servers** — when a session starts a development server and leaves it running, its row now shows the server, the port it listens on and how long it has been up, and flags one that looks forgotten. **Open** loads it in your browser; **Stop** ends it. Nothing is stopped unless you press the button.
+- **SpectiX didn't quit cleanly last time** — if the app was killed or crashed, the next launch says so and offers **Copy Diagnostics** or **Open GitHub Issue**, so a crash can be reported with the details attached. A normal quit or restart never shows it.
+- **Recent projects** — a search field filters the list by project name or path as you type, which matters once a few dozen folders have built up.
+- Model chips are now coloured by price tier, so the most expensive model in a list stands out at a glance, and a model SpectiX has not met before is shown in grey rather than black.
+
+### Fixed
+
+- Agent rows could stay on screen after the agent had already reported back, because Claude Code changed how a finished agent signs off. They now disappear as soon as the agent is done.
+- The session list slowly used more and more memory: every refresh rebuilt its rows and macOS kept a little of each old one. Rows are now updated in place, so a refresh no longer costs memory.
+- A newly released model with a one-million-token context was read as a 200k model, so its context bar filled up five times too fast. New Claude models are now assumed to have the larger window.
+- Sorting by status reordered sessions across the whole list, pulling them away from their projects. It now sorts within each project.
+- Two worktrees whose folders share a name were indistinguishable in notifications and in `Settings › Hidden`. They now read `parent / folder`, the same as the project headers.
+- A status dot could sit on the wrong spot for a terminal in a hidden tab after you dragged a panel divider. It is now hidden until its position is known again.
+
 ## 1.11 — Two accounts under one address, and your own themes (2026-10-10)
 
 Verified on Claude Code 2.1.296.

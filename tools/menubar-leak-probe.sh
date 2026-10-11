@@ -14,7 +14,7 @@
 # Nothing in the build or the test suite can catch a regression here: it compiles,
 # it runs, it just eats memory for days. So this script is the check — run it after
 # touching the capsule, with at least one session in the "working" state (that is
-# what used to drive the timer).
+# what used to drive the timer). Its CPU twin is ./tools/idle-cpu-probe.sh.
 set -euo pipefail
 SECS="${1:-120}"
 PID="${PID:-$(pgrep -x SpectiX | head -1)}"

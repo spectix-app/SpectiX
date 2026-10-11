@@ -18,7 +18,7 @@ import Cocoa
 // with Theme.baseFill) and model values only, never mid-animation frames.
 
 enum Shot: CaseIterable {
-    case rest, selected, hover, hoverGroup, selectedAndHover, selectedInHoveredGroup
+    case rest, selected, hover, hoverGroup, selectedAndHover, selectedInHoveredGroup, agentCluster
 
     var label: String {
         switch self {
@@ -28,6 +28,7 @@ enum Shot: CaseIterable {
         case .hoverGroup:       return "hover header (group)"
         case .selectedAndHover: return "selected + hover below"
         case .selectedInHoveredGroup: return "selected + own group hovered"
+        case .agentCluster:     return "hover agent cluster (1 + \(clusterAgents))"
         }
     }
 }
@@ -51,6 +52,13 @@ let previewWidths: [CGFloat] = [384, 468]
 // status has to be on every sheet, and a wall-clock render would show it 1 time in 7.
 Demo.pin(elapsed: 70)
 let previewRows = Demo.rows()
+// The cluster column gets its own rows: a session with this many agents, expanded and
+// hovered. Lift drift grows with the height of what lifts together, and the stock two
+// agents are too short a stack to show it (T335).
+let clusterAgents = 10
+let clusterRows = Demo.rows(agentCluster: clusterAgents)
+let clusterTty = clusterRows.first { $0.agents.count == clusterAgents }?.tty
+var clusterChecked = false
 
 func findTable(_ v: NSView) -> ReorderTableView? {
     if let t = v as? ReorderTableView { return t }
@@ -87,9 +95,11 @@ func render(_ shot: Shot, look: NSAppearance, previewWidth: CGFloat,
     win.contentView = host
     host.wantsLayer = true
 
-    let list = SessionListView(model: ListModel())
+    let model = ListModel()
+    if shot == .agentCluster, let tty = clusterTty { model.toggleAgentExpanded(tty) }
+    let list = SessionListView(model: model)
     host.addSubview(list)
-    list.reload(previewRows)
+    list.reload(shot == .agentCluster ? clusterRows : previewRows)
     // + the scroll view's 18pt bottom inset, so the last card's shadow isn't cut off
     // and the below-the-fold glow never fires.
     let listH = ceil(list.contentHeight) + 18
@@ -130,6 +140,17 @@ func render(_ shot: Shot, look: NSAppearance, previewWidth: CGFloat,
     // The one combination the other five miss: the SELECTED row is itself inside the
     // lifted group, so its halo wears the group scale while the halo's mask does not.
     case .selectedInHoveredGroup: table.setPinnedRow(t.first); pointAt(t.header)
+    case .agentCluster:
+        let rows = (0..<table.numberOfRows).map { list.agentClusterRows(childRow: $0) }
+        let cluster = rows.first { !$0.isEmpty } ?? []
+        // A silent fallback to an ordinary row would render a column that only looks
+        // like it tested the tall cluster, so a short or missing one fails the run.
+        guard cluster.count == clusterAgents + 1 else {
+            print("❌ agent cluster: expected \(clusterAgents + 1) rows, got \(cluster.count)")
+            exit(1)
+        }
+        if !clusterChecked { print("agent cluster: \(cluster.count) rows"); clusterChecked = true }
+        pointAt(cluster[0])
     }
     host.layoutSubtreeIfNeeded()
 

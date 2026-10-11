@@ -1126,8 +1126,9 @@ final class SettingsPane: NSView {
         let header = makeHiddenHeader(count: cwds.count)
         hiddenStack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: hiddenStack.widthAnchor).isActive = true
+        let names = ListModel.folderNames(cwds.filter { !AppController.isDesktopCwd($0) })
         for cwd in cwds {
-            let card = makeHiddenCard(cwd: cwd)
+            let card = makeHiddenCard(cwd: cwd, name: names[cwd] ?? cwd)
             hiddenStack.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: hiddenStack.widthAnchor).isActive = true
         }
@@ -1172,7 +1173,7 @@ final class SettingsPane: NSView {
         return row
     }
 
-    private func makeHiddenCard(cwd: String) -> NSView {
+    private func makeHiddenCard(cwd: String, name label: String) -> NSView {
         let card = GlassCard(radius: Theme.card, glows: false)
         card.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1181,9 +1182,9 @@ final class SettingsPane: NSView {
         badge.configure(isDesktop ? .desktop : .vscode)
         card.addSubview(badge)
 
-        // A desktop sentinel IS its label ("Claude App" / "Claude Design").
-        let name = NSTextField(labelWithString:
-            isDesktop ? cwd : (cwd as NSString).lastPathComponent)
+        // A desktop sentinel IS its label ("Claude App" / "Claude Design"), hence the
+        // `?? cwd` fallback at the call site.
+        let name = NSTextField(labelWithString: label)
         name.font = Theme.rounded(14, .semibold)
         name.textColor = .labelColor
         name.lineBreakMode = .byTruncatingTail

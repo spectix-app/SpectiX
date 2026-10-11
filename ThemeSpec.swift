@@ -198,6 +198,7 @@ struct ThemePalette {
     // Usage-line metric hues. Attributes of a session, never states.
     var claudeOrange: NSColor
     var usageGreen: NSColor
+    var modelFable: NSColor
     var modelOpus: NSColor
     var modelSonnet: NSColor
     var modelHaiku: NSColor

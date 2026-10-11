@@ -92,11 +92,12 @@ enum ThemeDefault {
             // Emerald / bright mint for elapsed time — kept distinct from the
             // semantic "done" dot green.
             usageGreen:   themePick(dark: themeRGB(0.34, 0.85, 0.56), light: themeRGB(0.10, 0.60, 0.40)),
-            // Model-family hues (#b39df8 / #5ad1c8 / #f0b866 in dark; same hues
-            // deepened for light).
+            // Model tiers by price, game-rarity order (T309): orange / violet / blue /
+            // green, dark values bright, same hues deepened for light.
+            modelFable:   themePick(dark: themeRGB(0.98, 0.62, 0.25), light: themeRGB(0.80, 0.42, 0.05)),
             modelOpus:    themePick(dark: themeRGB(0.70, 0.62, 0.97), light: themeRGB(0.45, 0.35, 0.80)),
-            modelSonnet:  themePick(dark: themeRGB(0.35, 0.82, 0.78), light: themeRGB(0.05, 0.50, 0.47)),
-            modelHaiku:   themePick(dark: themeRGB(0.94, 0.72, 0.40), light: themeRGB(0.68, 0.45, 0.10))
+            modelSonnet:  themePick(dark: themeRGB(0.40, 0.66, 0.98), light: themeRGB(0.12, 0.42, 0.80)),
+            modelHaiku:   themePick(dark: themeRGB(0.42, 0.84, 0.50), light: themeRGB(0.15, 0.55, 0.25))
         ),
 
         metrics: ThemeMetrics(

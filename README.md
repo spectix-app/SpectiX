@@ -95,7 +95,7 @@ cd SpectiX
 open "SpectiX Dev.app"
 ```
 
-Then wire the hooks (`hooks/spectix-status.sh`) into `~/.claude/settings.json` — see [`plugin/README.md`](plugin/README.md) for the hook list — and, for pane-level jumping in VS Code, run `./vscode-extension/install.sh` and reload the VS Code window.
+Then wire the hooks: either run `/plugin marketplace add spectix-app/SpectiX` and `/plugin install spectix@spectix` inside Claude Code, or add `hooks/spectix-status.sh` to `~/.claude/settings.json` by hand — see [`plugin/README.md`](plugin/README.md) for the hook list (use one path, not both). And, for pane-level jumping in VS Code, run `./vscode-extension/install.sh` and reload the VS Code window.
 
 **Signing tip:** without a signing identity, `build.sh` falls back to ad-hoc signing, which changes the code signature on every build, so macOS forgets the Accessibility grant and asks again after each rebuild. `tools/setup-signing-cert.sh` creates a stable self-signed identity named "SpectiX Dev" in your login keychain; `build.sh` uses it automatically and the grant survives rebuilds.
 

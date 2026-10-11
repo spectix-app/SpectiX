@@ -47,6 +47,7 @@ enum Demo {
         logsWritten = false
         current = [:]
         books = defaultBooks
+        stoppedPorts = []
     }
 
     // MARK: - Sessions
@@ -174,7 +175,10 @@ enum Demo {
     }
 
     /// The current frame of the fake world, in the same shape `fetchRows()` returns.
-    static func rows() -> [SessionRow] {
+    /// `agentCluster` > 0 forces the subagent session into 运行中 with that many agents —
+    /// tools/row-preview expands it to photograph a tall cluster lifting as one, which
+    /// the stock two agents are too short a stack to show.
+    static func rows(agentCluster: Int = 0) -> [SessionRow] {
         let now = Date().timeIntervalSince1970
         let e = elapsed
         let pane = panePid()
@@ -197,6 +201,9 @@ enum Demo {
                 if b.status == "working" { workThisCycle += b.secs }
                 acc += b.secs
             }
+            let cluster = agentCluster > 0 && !s.agents.isEmpty
+            let subs = cluster ? (0..<agentCluster).map { s.agents[$0 % s.agents.count] } : s.agents
+            if cluster { status = "working" }
 
             let folder = (s.cwd as NSString).lastPathComponent
             var r = SessionRow(title: folder, folder: folder, cwd: s.cwd,
@@ -222,11 +229,21 @@ enum Demo {
                 r.bgShells = 1
                 r.bgShellsSince = now - (p - acc)
             }
+            // Two servers for the bottom tray (T336): a fresh dev server and a preview
+            // server left up for days — the "probably forgotten" amber case. pids are
+            // empty so a demo 停止 can never signal a real process.
+            if s.tty == "ttys004", !stoppedPorts.contains(5173) {
+                r.services = [ServiceInfo(ports: [5173], kind: "Vite", start: now - 2 * 3600,
+                                          pids: [])]
+            } else if s.tty == "ttys015", !stoppedPorts.contains(8000) {
+                r.services = [ServiceInfo(ports: [8000], kind: L("静态网页", "Static site"),
+                                          start: now - 6 * 86_400, pids: [], stale: true)]
+            }
             if status == "working", !s.steps.isEmpty {
                 r.step = s.steps[Int(e / 4) % s.steps.count]
-                if !s.agents.isEmpty {
-                    r.bgAgents = s.agents.count
-                    r.agents = s.agents.enumerated().map { i, a in
+                if !subs.isEmpty {
+                    r.bgAgents = subs.count
+                    r.agents = subs.enumerated().map { i, a in
                         var ag = AgentInfo(id: "demo-\(s.tty)-\(i)", type: a.type,
                                            desc: a.desc, start: now - 40 - Double(i) * 25)
                         ag.step = a.step
@@ -281,6 +298,10 @@ enum Demo {
         guard let d = FileManager.default.contents(atPath: stagedPath) else { return [] }
         return (try? JSONDecoder().decode([Staged].self, from: d)) ?? []
     }
+
+    /// Ports whose 停止 was clicked: their tray row goes, as a real one would. Cleared
+    /// with the rest of the run in restart().
+    static var stoppedPorts: Set<Int> = []
 
     // MARK: - Staged editor pane
     //

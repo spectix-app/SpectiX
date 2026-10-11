@@ -235,6 +235,10 @@ struct SessionRow {
     // subtitle can show how long it's been running ("…运行中 · 2m"). 0 when bgShells == 0.
     var bgShellsSince: Double = 0
 
+    // Servers this session left listening (see ServiceInfo). NOT counted in bgShells: a
+    // server never wakes the model, so it must not hold the row on 等待 (T336).
+    var services: [ServiceInfo] = []
+
     // This row's 暂停 came from the staleness gate (both signal sources dead AND no live
     // command shell — see fetchRows), not from a real interrupt. Same fuchsia pill, but
     // excluded from every attention pool via awaitsYou.
@@ -320,9 +324,12 @@ struct SessionRow {
     // The project name a toast/header shows: the cwd's leaf folder, or — for a desktop
     // row — the sentinel cwd itself, which IS the label ("Claude App" / "Claude
     // Design"). Matches ListModel.projectItems' folder derivation so a banner names the
-    // project exactly like its list header.
-    var projectName: String {
-        isDesktop ? cwd : (cwd as NSString).lastPathComponent
+    // project exactly like its list header. `cwds` must be the same set the list
+    // groups by: two worktrees sharing a leaf only get "<parent> / <leaf>" when both
+    // are in it (ListModel.folderNames).
+    func projectName(among cwds: [String]) -> String {
+        if isDesktop { return cwd }
+        return ListModel.folderNames(Array(Set(cwds + [cwd])))[cwd] ?? (cwd as NSString).lastPathComponent
     }
 
     // The project icon a toast shows in its left tile — same source badge the list
@@ -369,6 +376,24 @@ struct AgentInfo: Equatable {
     // -1 (hidden) rather than 0% while unknown: a fabricated 0% on every agent node was
     // the bug this replaces. A real reading is only ever a percentage of a real window.
     var ctxPct: Int { ctxTokens > 0 ? ctxPercent(tokens: ctxTokens, limit: ctxLimit) : -1 }
+}
+
+// A long-lived server a session left running: a backgrounded Bash-tool command whose
+// process tree LISTENS on a TCP port (a design-preview http.server, `expo start`, a vite
+// dev server). Split out of bgShells (T336) because the model never resumes on it the way
+// it does on a build or a test run — counting it as 等待 pinned a finished row teal for
+// as long as the server lived (measured: 6 days). Rendered in the list's bottom tray and
+// as a `:port` tag on the owning row; the row's status no longer sees it.
+struct ServiceInfo: Equatable {
+    var ports: [Int]           // ascending; the first is the one shown/opened
+    var kind: String           // "Expo" / "Vite" / 静态网页 / the binary's name
+    var start: Double          // epoch the listening process started
+    var pids: [pid_t]          // what 停止 signals: the listeners + the shell's direct children
+    // The owning session has been quiet (done/idle/paused) for over a day: likely forgotten.
+    // Only a hint — the user's preview servers are meant to outlive their turn.
+    var stale: Bool = false
+    var root: String? = nil      // folder a static server serves; lets 打开 go to its lone page
+    var port: Int { ports[0] }   // scan never yields a service without a port
 }
 
 // Your Claude *subscription* usage, as printed by `/usage` and captured by the status
@@ -1458,6 +1483,11 @@ class AppController: NSObject, NSApplicationDelegate {
         // icon does. By the next tick launch is complete (same state the reopen path
         // runs in, which works), so the window shows reliably.
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
+        LaunchSentinel.treatSigtermAsQuit()
+        if let unclean = LaunchSentinel.arm() {
+            // After the main window's own deferred show, so the alert lands on top of it.
+            DispatchQueue.main.async { LaunchSentinel.prompt(unclean) }
+        }
         refresh()
         // Surface the one permission this app needs up front, so the user enables it
         // before discovering a dead-feeling click later (rather than on first jump).
@@ -1839,13 +1869,32 @@ class AppController: NSObject, NSApplicationDelegate {
             let dup = (folderCount[s.cwd] ?? 0) > 1
             let title = dup ? "\(folder) · \(String(format: "%02d", seq))" : folder
             // A "needs" row means a PermissionRequest hook fired when a dialog appeared,
-            // but Claude Code emits no hook the instant you APPROVE — see runningToolShells.
+            // but Claude Code emits no hook the instant you APPROVE — see commandShells.
             // If a command that started AFTER the dialog is running, you've approved and
             // work resumed: paint 蓝, not 红. The `needs` write time = the state file mtime.
-            var status = sessionStatus(tty: s.tty)
+            // A fresh codex fires no hook until its first prompt — see InheritedState.
+            var status = InheritedState.status(sessionStatus(tty: s.tty), isCodex: s.kind == .codex,
+                                               stateMTime: fileMTime("\(dataDir)/state-\(s.tty)"),
+                                               processStart: processStartEpoch(s.claudePid))
+            // One process scan per row, shared by every check below. Each command shell
+            // is then split (T336): one whose tree LISTENS on a port is a server — it never
+            // wakes the model, so it goes to `services`, not into the 等待 / frozen checks.
+            let shells = commandShells(kind: s.kind, claudePid: s.claudePid)
+            var services: [ServiceInfo] = []
+            var plainShells: [ToolShell] = []
+            for sh in shells {
+                if let f = ServiceProbe.scan(shell: sh.pid, children: childPIDs, args: processArgs) {
+                    services.append(ServiceInfo(ports: f.ports, kind: f.kind, start: sh.start,
+                                                pids: f.pids, root: f.root))
+                } else {
+                    plainShells.append(sh)
+                }
+            }
             if status == "needs" {
+                // Servers count here: approving `expo start` spawns a shell after the
+                // needs write just like any other approved command.
                 let since = fileMTime("\(dataDir)/state-\(s.tty)")
-                if runningToolShells(kind: s.kind, claudePid: s.claudePid, since: since).count > 0 {
+                if shells.contains(where: { $0.start > since }) {
                     status = "working"
                 }
             } else if status == "done",
@@ -1862,25 +1911,25 @@ class AppController: NSObject, NSApplicationDelegate {
             // the model wakes by itself when the command exits, so nothing is yours to
             // do yet. That third answer is `await` (青「等待」, T312) — forced over done AND
             // stale idle, so a live background command always reads as 等待 and never
-            // trips the daemon idle→paused branch below. A dev server that runs for hours
-            // keeps its row on 等待 by design (the subtitle carries the elapsed time).
+            // trips the daemon idle→paused branch below. A command that SERVES (listens on a
+            // port) is not counted: it never wakes the model, so it went to `services` above
+            // instead of holding the row on 等待 for as long as it lives (T336).
             //
             // Keep the COUNT regardless: the "▸ N 个后台命令运行中" subtitle (rendered on
             // the await row, see MainWindow) says how many and for how long. `since` is 0
             // (no start-time guard): the
             // shell predates the Stop, and done/idle has no pending dialog to confuse a
-            // lingering shell with. The shell-snapshot signature (see runningToolShells)
+            // lingering shell with. The shell-snapshot signature (see commandShells)
             // keeps this from counting long-lived MCP-server shells.
             var bgShells = 0
             var bgShellsSince = 0.0
             if status == "done" || status == "idle" {
-                let probe = runningToolShells(kind: s.kind, claudePid: s.claudePid, since: 0)
-                bgShells = probe.count
-                bgShellsSince = probe.oldest
+                bgShells = plainShells.count
+                bgShellsSince = plainShells.map(\.start).min() ?? 0
                 if bgShells > 0 { status = "await" }
             }
             // Daemon authority for two cases the tty-keyed hooks structurally miss.
-            // Override last — after the runningToolShells probe — so a lingering
+            // Override last — after the commandShells probe — so a lingering
             // dev-server shell can't win. The daemon's per-session status:
             //   "waiting" = parked on a pending interaction you must answer (permission
             //               / question / plan). A BACKGROUND subagent's permission
@@ -1905,7 +1954,7 @@ class AppController: NSObject, NSApplicationDelegate {
                 // permission approval) and the model resumed thinking — but that answer
                 // emits NO hook until the next PreToolUse, so the state file stays pinned
                 // at needs(红) through the whole think phase (the "答完还红一会儿" bug).
-                // runningToolShells can't rescue it: nothing is spawned yet while the
+                // The shell probe can't rescue it: nothing is spawned yet while the
                 // model reasons. The daemon flips to busy the instant you answer, so a
                 // busy write NEWER than the needs write = answered, work resumed → 蓝.
                 // Guard updatedAt > state mtime so a dialog that just appeared (daemon
@@ -1960,9 +2009,17 @@ class AppController: NSObject, NSApplicationDelegate {
             if status == "working",
                now - fileMTime("\(dataDir)/state-\(s.tty)") > 600,
                now - daemon.updatedAt > 600,
-               runningToolShells(kind: s.kind, claudePid: s.claudePid, since: 0).count == 0 {
+               shells.isEmpty {
+                // ALL shells, servers included: a long foreground e2e run that hosts its
+                // own web server is still running, and must not read as 暂停.
                 status = "paused"
                 frozen = true
+            }
+            // Likely forgotten: the owning session has sat quiet for over a day. A hint
+            // only — preview servers are meant to outlive their turn.
+            if status == "done" || status == "idle" || status == "paused",
+               now - fileMTime("\(dataDir)/state-\(s.tty)") > 86_400 {
+                for i in services.indices { services[i].stale = true }
             }
             // Count this session's time/tokens from whichever is later: the claude
             // PROCESS start (covers a brand-new terminal — new PID zeroes naturally) or
@@ -2076,7 +2133,7 @@ class AppController: NSObject, NSApplicationDelegate {
             // session on native-1M Opus 5.5 in a dir last used with a 200k model read ~5x
             // high. Upgrade-only — transcript ids never carry "[1m]", so a 1M-beta
             // session's own id can't prove a 200k window and must not downgrade it.
-            if let m = sessionModel, Self.isNative1M(m) { row.ctxLimit = 1_000_000 }
+            if let m = sessionModel, ContextWindow.isOneMillion(m) { row.ctxLimit = 1_000_000 }
             // ★ Codex enrichment. Every number above this line came from a Claude-private
             // source — events.jsonl's per-turn token tallies, ~/.claude.json, the Claude
             // transcript — and all of them are legitimately empty for a Codex session, so
@@ -2107,6 +2164,7 @@ class AppController: NSObject, NSApplicationDelegate {
             row.bgAgents = agentCount
             row.bgShells = bgShells
             row.bgShellsSince = bgShellsSince
+            row.services = services
             row.isFrozen = frozen
             row.terminalApp = s.terminalApp
             row.editor = s.editor
@@ -2200,23 +2258,11 @@ class AppController: NSObject, NSApplicationDelegate {
         return out
     }
 
-    // Models whose NATIVE context window is 1M, so their lastModelUsage key carries NO
-    // "[1m]" suffix (that suffix only marks the Sonnet/Opus 1M-beta variants). Matched as
-    // a substring of the model id, e.g. "claude-fable-5". Without this, a native-1M
-    // session under 200k tokens is misjudged as a 200k window and its % reads ~5x high.
-    // "opus-5-5" is listed exact, not as "opus-5": Opus 5 itself was a 1M-beta model
-    // (seen here as "claude-opus-5[1m]"), so a bare Opus 5 key is a 200k window.
-    private static let native1MModels = ["fable-5", "mythos-5", "opus-5-5"]
-
-    private static func isNative1M(_ modelKey: String) -> Bool {
-        modelKey.contains("[1m]") || native1MModels.contains { modelKey.contains($0) }
-    }
-
     // The context-window limit (in tokens) per project cwd, inferred from the model it
     // last used. ~/.claude.json's projects.<cwd>.lastModelUsage is keyed by model id.
     // A 1M window shows up two ways: the "[1m]" suffix on Sonnet/Opus 1M-beta sessions,
-    // or a natively-1M model id (see native1MModels) that carries no suffix at all —
-    // isNative1M covers both. Anything else is the default 200,000. A cwd with no usable
+    // or a natively-1M model id that carries no suffix at all —
+    // ContextWindow.isOneMillion covers both. Anything else is the default 200,000. A cwd with no usable
     // model key is omitted (0 → gauge shows raw tokens, no %).
     // Split out of loadCtxLimitByCwd so ONE parse of ~/.claude.json feeds both the
     // window-size map and the per-row model label (a session with no completed turn of
@@ -2233,14 +2279,14 @@ class AppController: NSObject, NSApplicationDelegate {
             // Ignore haiku (the background/summarizer model); the main model's key
             // drives both the window size and the label the user cares about.
             let mains = usage.keys.filter { !$0.contains("haiku") }
-            guard let key = mains.first(where: { Self.isNative1M($0) }) ?? mains.first else { continue }
+            guard let key = mains.first(where: { ContextWindow.isOneMillion($0) }) ?? mains.first else { continue }
             out[cwd] = key
         }
         return out
     }
 
     private func ctxLimits(from modelKeys: [String: String]) -> [String: Int] {
-        modelKeys.mapValues { Self.isNative1M($0) ? 1_000_000 : 200_000 }
+        modelKeys.mapValues { ContextWindow.isOneMillion($0) ? 1_000_000 : 200_000 }
     }
 
     // "claude-opus-4-8[1m]" → "Opus 4.8", "claude-haiku-4-5-20251001" → "Haiku 4.5".
@@ -2322,6 +2368,10 @@ class AppController: NSObject, NSApplicationDelegate {
         // a streamed fragment that carries no reason. Only the agent path reads it —
         // that's how a finished subagent is told from a running one (see agentTail).
         var stopReason: String?
+        // That message calls SubagentHandback — how Claude Code (2026-10) ends a
+        // subagent: a final TOOL call delivering the report, logged with no stop_reason,
+        // so the stopReason rule alone reads every returned agent as still running.
+        var handedBack = false
     }
 
     private func liveInfo(tty: String) -> LiveInfo? {
@@ -2597,6 +2647,7 @@ class AppController: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Demo.staged.values.forEach { closeStagedWindow($0) }
+        LaunchSentinel.disarm()
     }
 
     // The one check behind rule 2's exception: the window id still exists AND its shell
@@ -2646,6 +2697,7 @@ class AppController: NSObject, NSApplicationDelegate {
     // The toast half of notifyTransitions, for staged rows only — the rest of that
     // function (answered-chain, break clock, impact log) acts on real state.
     private func notifyDemoTransitions(_ rows: [SessionRow]) {
+        let cwds = rows.map(\.cwd) + model.emptyProjects.map(\.cwd)
         let staged = rows.filter { Demo.stagedWindow(for: $0) != nil }
         for row in staged {
             let prev = demoLastStatus[row.id]
@@ -2654,7 +2706,7 @@ class AppController: NSObject, NSApplicationDelegate {
             paintDemoTerminal(row)
             guard prev != nil else { continue }
             if row.status == "needs" || (row.status == "done" && prev == "working") {
-                ToastManager.shared.show(title: row.projectName, subtitle: row.display,
+                ToastManager.shared.show(title: row.projectName(among: cwds), subtitle: row.display,
                                          icon: row.badgeMode, status: row.status,
                                          path: row.id) { [weak self] in self?.focus(row) }
             } else if prev == "needs" {
@@ -2669,7 +2721,30 @@ class AppController: NSObject, NSApplicationDelegate {
     // Push the current rows to every view, with the L("查看", "View") eye overlaid on any
     // session you're actively looking at. Callable outside a refresh (e.g. on a
     // banner click) so the list updates the instant you enter checking.
+    // A notification posted synchronously from inside renderRows (headerAgentInfo files
+    // quota into AccountBook, which posts quotaDidChange → accountQuotaDidChange →
+    // renderRows) recursed until the stack overflowed (T348). Re-entry is always a bug
+    // upstream: dev builds log who re-entered, every build defers one coalesced redraw
+    // to the next run-loop turn instead of recursing.
+    private var renderRowsActive = false
+    private var renderRowsDeferred = false
+
     private func renderRows() {
+        guard !renderRowsActive else {
+            if Build.isDev {
+                NSLog("TB renderRows re-entered (T348):\n%@",
+                      Thread.callStackSymbols.prefix(16).joined(separator: "\n"))
+            }
+            guard !renderRowsDeferred else { return }
+            renderRowsDeferred = true
+            DispatchQueue.main.async { [weak self] in
+                self?.renderRowsDeferred = false
+                self?.renderRows()
+            }
+            return
+        }
+        renderRowsActive = true
+        defer { renderRowsActive = false }
         let view = applyChecking(rows)
         model.update(view)
         // reload() feeds the 最近项目 tab fresh openCwds too, so 已打开 badges
@@ -3009,11 +3084,11 @@ class AppController: NSObject, NSApplicationDelegate {
     // state file flipped to "needs". So only count a command shell that started later
     // than that `needs` write (`since`). Leftovers predate it and are correctly ignored.
     //
-    // Returns the NUMBER of qualifying command shells, not just a yes/no: a session can
-    // have several backgrounded commands alive at once, and the row surfaces that count
-    // ("2 个命令在跑") so a blue row with no step doesn't read as "stuck" (see
-    // SessionRow.bgShells).
-    private func runningToolShells(kind: AgentKind, claudePid: pid_t, since: Double) -> (count: Int, oldest: Double) {
+    // T336: returns every qualifying shell with its start time instead of a count —
+    // fetchRows takes the list once per row and applies the `since` guard itself, so the
+    // needs / await / frozen checks and the service split share one process scan.
+    struct ToolShell { let pid: pid_t; let start: Double }
+    private func commandShells(kind: AgentKind, claudePid: pid_t) -> [ToolShell] {
         // ★ Claude-only, deliberately. Measured 2026-08-30: Codex spawns a tool command
         // as a DIRECT child of the agent process (`sleep 12` with ppid == the codex
         // binary) — no `sh -c`, no shell snapshot to source. So every signature below
@@ -3025,11 +3100,10 @@ class AppController: NSObject, NSApplicationDelegate {
         // child, and counting it would pin a finished row blue forever, which is a worse
         // bug than the one the probe fixes. Codex sessions therefore rely on hooks alone,
         // the same tradeoff editor chat panels already make (docs/session-status.md).
-        guard kind == .claude else { return (0, 0) }
-        guard claudePid > 0 else { return (0, 0) }
+        guard kind == .claude else { return [] }
+        guard claudePid > 0 else { return [] }
         let now = Date().timeIntervalSince1970
-        var count = 0
-        var oldest = 0.0
+        var out: [ToolShell] = []
         for c in childPIDs(claudePid) {
             let args = processArgs(c)
             guard let a0 = args.first else { continue }
@@ -3059,12 +3133,11 @@ class AppController: NSObject, NSApplicationDelegate {
             // ≥1s. A genuinely approved command outlives that easily, and a 1s-late
             // blue repaint is imperceptible next to the minutes-long command run;
             // a short helper (or an unfiltered future hook) never qualifies.
-            if let started = processStartEpoch(c), started > since, now - started > 1.0 {
-                count += 1
-                if oldest == 0 || started < oldest { oldest = started }
+            if let started = processStartEpoch(c), now - started > 1.0 {
+                out.append(ToolShell(pid: c, start: started))
             }
         }
-        return (count, oldest)
+        return out
     }
 
     // Claude Code v2.1's daemon maintains ~/.claude/sessions/<pid>.json per live
@@ -4254,15 +4327,26 @@ class AppController: NSObject, NSApplicationDelegate {
             guard (d["end"] as? NSNumber)?.doubleValue ?? 0 <= 0 else { return nil }
             let tail = agentTail(parentTranscript: parentTranscript, agentId: id)
             guard !tail.finished else { return nil }
+            let start = (d["start"] as? NSNumber)?.doubleValue ?? 0
+            let stepPath = "\(dataDir)/agent-step-\(tty)-\(id)"
+            // No transcript means signal 1 can never fire, and on an idle session the
+            // hook's 600s sweep never runs either — so the entry would sit there for good
+            // (measured: an agent that ended in a SubagentHandback but left no transcript
+            // was shown running for a day). Apply the hook's own heartbeat rule here: no
+            // tool call for 600s and nothing to read → it's gone.
+            if tail.missing {
+                // Same fallback order as the hook sweep: no start stamp → the ledger's mtime.
+                let beat = max(fileMTime(stepPath), start > 0 ? start : fileMTime("\(dataDir)/bg-\(tty)"))
+                if Date().timeIntervalSince1970 - beat > 600 { return nil }
+            }
             var a = AgentInfo(id: id,
                               type: d["type"] as? String ?? "",
                               desc: d["desc"] as? String ?? "",
-                              start: (d["start"] as? NSNumber)?.doubleValue ?? 0)
+                              start: start)
             a.model = d["model"] as? String ?? ""
             a.ctxTokens = tail.ctx
             a.ctxLimit = ctxLimit
-            a.step = (try? String(contentsOfFile: "\(dataDir)/agent-step-\(tty)-\(id)",
-                                  encoding: .utf8))?
+            a.step = (try? String(contentsOfFile: stepPath, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return a
         }
@@ -4282,8 +4366,8 @@ class AppController: NSObject, NSApplicationDelegate {
     // Live, not just at completion: the file grows as the agent works, so a running
     // node's % climbs with it. 0 when the pointer, the file or a usable reading is
     // missing — the node then shows no % instead of a fabricated 0%.
-    private func agentTail(parentTranscript: String, agentId: String) -> (ctx: Int, finished: Bool) {
-        guard !parentTranscript.isEmpty, !agentId.isEmpty else { return (0, false) }
+    private func agentTail(parentTranscript: String, agentId: String) -> (ctx: Int, finished: Bool, missing: Bool) {
+        guard !parentTranscript.isEmpty, !agentId.isEmpty else { return (0, false, true) }
         let stem = (parentTranscript as NSString).deletingPathExtension
         // resolvingSymlinksInPath, because these files often ARE symlinks (a resumed or
         // forked session's subagents dir links back to the original session's). Attribute
@@ -4295,14 +4379,14 @@ class AppController: NSObject, NSApplicationDelegate {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let size = (attrs[.size] as? NSNumber)?.uint64Value,
               let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970
-        else { return (0, false) }
+        else { return (0, false, true) }
         // Same bargain as liveModelCache: a busy turn fires many FSEvent refreshes, and
         // each would otherwise re-scan every agent's tail. Returned agents never change
         // again, so their entry is a permanent hit. Ids accumulate over a long uptime
         // (the roster prunes, the cache wouldn't) — drop the lot past a sane bound
         // rather than track liveness; the next poll simply re-reads the live few.
         let stamp = "\(size)|\(mtime)"
-        if let hit = agentCtxCache[agentId], hit.stamp == stamp { return (hit.ctx, hit.finished) }
+        if let hit = agentCtxCache[agentId], hit.stamp == stamp { return (hit.ctx, hit.finished, false) }
         if agentCtxCache.count > 512 { agentCtxCache.removeAll(keepingCapacity: true) }
         // An agent gets its own file, so nothing in it is a sidechain to skip, and its
         // model chip comes from the ledger — only the token side and the stop reason of
@@ -4314,10 +4398,12 @@ class AppController: NSObject, NSApplicationDelegate {
         // hook can't retire the roster entry until the wake-up reaches a UserPromptSubmit,
         // which on an idle session is whenever the user next types (so a finished agent
         // used to sit in the list indefinitely). A missing/unreadable reason means "keep
-        // showing it" — never guess a live agent away.
-        let finished = (info?.stopReason.map { $0 != "tool_use" }) ?? false
+        // showing it" — never guess a live agent away. If a Claude Code release changes
+        // how a subagent wraps up again, tools/agent-tail-probe.py is what notices.
+        let finished = info?.handedBack == true
+            || ((info?.stopReason.map { $0 != "tool_use" }) ?? false)
         agentCtxCache[agentId] = (stamp, ctx, finished)
-        return (ctx, finished)
+        return (ctx, finished, false)
     }
 
     // The newest assistant message in a transcript's tail, as (model, context occupancy).
@@ -4356,8 +4442,12 @@ class AppController: NSObject, NSApplicationDelegate {
                 + (u["cache_read_input_tokens"] as? Int ?? 0)
                 + (u["cache_creation_input_tokens"] as? Int ?? 0)
             if ctx > 0 {
+                let blocks = msg["content"] as? [[String: Any]] ?? []
                 return LiveInfo(model: model, ctxTokens: ctx,
-                                stopReason: msg["stop_reason"] as? String)
+                                stopReason: msg["stop_reason"] as? String,
+                                handedBack: blocks.contains {
+                                    $0["type"] as? String == "tool_use"
+                                        && $0["name"] as? String == "SubagentHandback" })
             }
         }
         return nil
@@ -4377,6 +4467,7 @@ class AppController: NSObject, NSApplicationDelegate {
     // is also silent: the green ✓ resolve already acknowledged it — a second banner
     // is the "shows once more" duplicate.
     private func notifyTransitions(_ newRows: [SessionRow]) {
+        let cwds = newRows.map(\.cwd) + model.emptyProjects.map(\.cwd)
         var answered = false
         if primed {
             for row in newRows {
@@ -4392,7 +4483,8 @@ class AppController: NSObject, NSApplicationDelegate {
                 // jump carried you to left you stranded until a fresh idle spell ran
                 // the full threshold again (the "等了好一会才跳下一个" bug).
                 if prev == "needs" || prev == "paused",
-                   row.status == "working" || row.status == "done" || row.status == "await" {
+                   row.status == "working" || row.status == "done" || row.status == "await",
+                   userAnswered(row) {
                     answered = true
                 }
                 // The highlight ring exists to point at a needs/paused session; the
@@ -4407,7 +4499,7 @@ class AppController: NSObject, NSApplicationDelegate {
                 case "needs":
                     resolvedNeeds.remove(row.id)             // a fresh prompt, not yet answered
                     logNotified(row)
-                    ToastManager.shared.show(title: row.projectName, subtitle: row.display,
+                    ToastManager.shared.show(title: row.projectName(among: cwds), subtitle: row.display,
                                              icon: row.badgeMode, status: "needs", path: row.id) { [weak self] in
                         self?.focus(row)
                         self?.enterChecking(row)             // clicking = looking → eye on row + toast
@@ -4442,7 +4534,7 @@ class AppController: NSObject, NSApplicationDelegate {
                         // Not the tail of an answered permission, and a completion we
                         // actually watched happen → a real L("完成", "Done") banner.
                         logNotified(row)
-                        ToastManager.shared.show(title: row.projectName, subtitle: row.display,
+                        ToastManager.shared.show(title: row.projectName(among: cwds), subtitle: row.display,
                                                  icon: row.badgeMode, status: "done", path: row.id) { [weak self] in
                             self?.focus(row)
                         }
@@ -4527,6 +4619,19 @@ class AppController: NSObject, NSApplicationDelegate {
         }?.id
     }
 
+    // ★ Only YOUR answer may trigger the chain (T306). A session that just went red
+    // in another tab flickers 红→蓝→红 on its own idle-ping hooks (see
+    // parkedReleaseInputWindow), and that needs → working dip used to count as
+    // "answered": half a second later the chain carried the user, mid-sentence in some
+    // other terminal, straight onto that brand-new red. An answer is a keystroke made
+    // in that very session, so require both. Native-terminal rows have no focus token
+    // (frontmostIsSession is always false for them), so they keep the input test alone.
+    private func userAnswered(_ row: SessionRow) -> Bool {
+        guard secondsSinceLastInput() < parkedReleaseInputWindow else { return false }
+        if row.editor == nil && !row.isDesktop { return true }
+        return frontmostIsSession(row)
+    }
+
     // You just dealt with one session (answered its prompt, or resumed it from
     // paused) and others still await: jump to the next one so a backlog clears
     // without hunting for each. The target follows the user's jump priority filtered
@@ -4539,6 +4644,22 @@ class AppController: NSObject, NSApplicationDelegate {
     // even when "done" is an eligible target: it means "YOU finished something", and
     // a session completing on its own is not you having done anything.
     private func autoJumpToNextNeeds(_ rows: [SessionRow]) {
+        guard AppSettings.autoJumpNextNeeds else { return }
+        // Pause before moving on so the jump doesn't land the instant you answer.
+        pendingChainJump?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingChainJump = nil
+            self.performChainJump(self.rows)
+        }
+        pendingChainJump = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + chainJumpDelay, execute: work)
+    }
+
+    private var pendingChainJump: DispatchWorkItem?
+    private let chainJumpDelay: Double = 0.5
+
+    private func performChainJump(_ rows: [SessionRow]) {
         guard AppSettings.autoJumpNextNeeds else { return }
         // ★ Standing in a prompt you haven't answered → nobody gets to move you (T182).
         // The chain fires on ANY row going needs/paused → working, including the one the
@@ -5653,20 +5774,26 @@ class AppController: NSObject, NSApplicationDelegate {
     /// panel offers the command verbatim so it can be pasted anywhere.
     func runInTerminal(_ cmd: String) {
         // Two levels of quoting: AppleScript string, then whatever sh sees inside it.
-        let escaped = cmd
+        // `&& exit` ends the shell only on success, so a failed login stays on screen.
+        let escaped = (cmd + " && exit")
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
         tell application "Terminal"
             activate
             do script "\(escaped)"
+            return id of front window
         end tell
         """
-        // ★ Non-zero here is almost always TCC: the Automation grant for Terminal was
+        // ★ No window id here is almost always TCC: the Automation grant for Terminal was
         // declined (or never asked) and osascript dies with -1743 — and nothing else
         // on screen changes. That was reported as "I clicked Add account and nothing
         // happened", so the failure has to be said out loud, with the way out.
-        guard spawnResponsible(["/usr/bin/osascript", "-e", script]) != 0 else { return }
+        if let out = spawnResponsibleCapturing(["/usr/bin/osascript", "-e", script]),
+           let windowID = Int(out) {
+            closeTerminalWhenShellExits(windowID)
+            return
+        }
         let a = NSAlert()
         a.alertStyle = .warning
         a.messageText = L("打不开终端", "Couldn't open Terminal")
@@ -5687,6 +5814,26 @@ class AppController: NSObject, NSApplicationDelegate {
             NSPasteboard.general.setString(cmd, forType: .string)
         default:
             break
+        }
+    }
+
+    /// Closes the window once its shell is gone. Terminal's own "When the shell exits"
+    /// setting is per profile and often "Don't close", so it can't be relied on.
+    private func closeTerminalWhenShellExits(_ windowID: Int) {
+        let script = """
+        tell application "Terminal"
+            repeat 900 times
+                delay 1
+                if not (exists window id \(windowID)) then return
+                if (count of processes of tab 1 of window id \(windowID)) is 0 then
+                    close window id \(windowID)
+                    return
+                end if
+            end repeat
+        end tell
+        """
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.spawnResponsible(["/usr/bin/osascript", "-e", script])
         }
     }
 

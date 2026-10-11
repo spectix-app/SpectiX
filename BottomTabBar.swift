@@ -35,7 +35,7 @@ final class BottomTabBar: NSView {
 
         let specs: [(symbol: String, label: String)] = [
             ("display", L("会话", "Sessions")),
-            ("chart.bar", L("回顾", "Insights")),
+            ("chart.bar", L("数据", "Insights")),
             ("clock.arrow.circlepath", L("最近项目", "Recent")),
             ("wand.and.stars", L("技能", "Skills")),
             ("gearshape", L("设置", "Settings")),

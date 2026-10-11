@@ -60,8 +60,8 @@ installer's uninstall button does this for you).
 ## Install
 
 ```
-/plugin marketplace add spectix-lab/spectix-plugin
-/plugin install spectix
+/plugin marketplace add spectix-app/SpectiX
+/plugin install spectix@spectix
 ```
 
 Then restart your Claude Code sessions (or run `/clear`) so the hooks take effect.

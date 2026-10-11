@@ -539,14 +539,15 @@ enum AppSettings {
     // MARK: Sort mode
     //
     // How the session list groups sessions. `custom` (default) groups by project
-    // (cwd) with the user's drag-reorder rank on top. `status` groups by status
-    // bucket instead (需确认 → 完成 → 运行中 → 闲置) and disables drag-reorder.
+    // (cwd) with the user's drag-reorder rank on top. `status` keeps the project
+    // groups but sorts each one's sessions by status (needs → done → … → idle),
+    // never across projects (T307), and disables drag-reorder.
     enum SortMode: String, CaseIterable {
         case custom, status
         var title: String {
             switch self {
             case .custom: return L("按项目分组", "By Project")
-            case .status: return L("按状态分组", "By Status")
+            case .status: return L("项目内按状态", "By Status")
             }
         }
     }

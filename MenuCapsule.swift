@@ -81,6 +81,14 @@ final class MenuCapsuleView: NSView {
         layoutPulse()
     }
 
+    // `apply` parks the pulse against the OLD bounds: the caller resizes the status
+    // item only afterwards, and draw() recenters on the new width while the layer
+    // stayed put — the blue dot landed on the needs figure (2026-09-18).
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutPulse()
+    }
+
     /// Width this set of segments needs. The status item's length is set from it —
     /// only when it changes, because a width write is the single most expensive leak
     /// on the old code path (+160 objects).

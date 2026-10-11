@@ -18,8 +18,9 @@ final class RecentProjectsPane: NSView {
     var onOpen: ((String) -> Void)?
 
     private let listStack = NSStackView()
-    private let emptyLabel = NSTextField(labelWithString: L("还没有记录。点右上角 + 手动添加，或跑几个会话后再回来看。", "No history yet. Tap + at the top-right to add manually, or run a few sessions and check back."))
+    private let emptyLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
+    private let searchField = NSSearchField()
     private var openCwds: Set<String> = []
 
     init() {
@@ -50,7 +51,18 @@ final class RecentProjectsPane: NSView {
         countLabel.font = Theme.font(11)
         countLabel.textColor = .secondaryLabelColor
         countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
         addSubview(countLabel)
+
+        searchField.placeholderString = L("搜索项目名或路径", "Search name or path")
+        searchField.controlSize = .large
+        searchField.font = Theme.font(13)
+        searchField.focusRingType = .none
+        searchField.target = self
+        searchField.action = #selector(searchChanged)
+        (searchField.cell as? NSSearchFieldCell)?.sendsSearchStringImmediately = true
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(searchField)
 
         listStack.orientation = .vertical
         listStack.alignment = .leading
@@ -84,6 +96,11 @@ final class RecentProjectsPane: NSView {
             countLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.pad),
             countLabel.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
 
+            searchField.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: 10),
+            searchField.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -8),
+            searchField.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+            searchField.heightAnchor.constraint(equalTo: addButton.heightAnchor),
+
             scroll.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.pad - 6),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(Theme.pad - 6)),
@@ -110,13 +127,26 @@ final class RecentProjectsPane: NSView {
     func refresh(openCwds: Set<String>) {
         self.openCwds = openCwds
         listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let entries = ProjectHistory.all()
-        let names = ListModel.folderNames(entries.map { $0.path })
+        let all = ProjectHistory.all()
+        let names = ListModel.folderNames(all.map { $0.path })
+        func name(_ e: ProjectHistory.Entry) -> String {
+            names[e.path] ?? (e.path as NSString).lastPathComponent
+        }
+        let terms = searchField.stringValue.lowercased().split(separator: " ")
+        let entries = terms.isEmpty ? all : all.filter { e in
+            let hay = (name(e) + " " + (e.path as NSString).abbreviatingWithTildeInPath).lowercased()
+            return terms.allSatisfy { hay.contains($0) }
+        }
+        emptyLabel.stringValue = all.isEmpty
+            ? L("还没有记录。点右上角 + 手动添加，或跑几个会话后再回来看。", "No history yet. Tap + at the top-right to add manually, or run a few sessions and check back.")
+            : L("没有匹配的项目", "No matching projects")
         emptyLabel.isHidden = !entries.isEmpty
-        countLabel.stringValue = entries.isEmpty ? "" : L("\(entries.count) 个项目", "\(entries.count) projects")
+        countLabel.stringValue = all.isEmpty ? ""
+            : terms.isEmpty ? L("\(all.count) 个项目", "\(all.count) projects")
+            : "\(entries.count) / \(all.count)"
         for e in entries {
             let row = ProjectRowView(entry: e,
-                                     displayName: names[e.path] ?? (e.path as NSString).lastPathComponent,
+                                     displayName: name(e),
                                      isOpen: openCwds.contains(e.path))
             row.onOpen = { [weak self] path in self?.onOpen?(path) }
             row.onPin = { [weak self] path, pinned in
@@ -131,6 +161,8 @@ final class RecentProjectsPane: NSView {
             row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
         }
     }
+
+    @objc private func searchChanged() { refresh(openCwds: openCwds) }
 
     // Folder picker for projects SpectiX never saw (no Claude session yet).
     @objc private func addClicked() {

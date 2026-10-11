@@ -1682,23 +1682,44 @@ final class CountPill: NSView {
     // `placeholder` stands in when there are no buckets to draw — the summary
     // header passes "—" so its chip still anchors the header's left edge on an
     // empty list (per-group headers pass nil and hide themselves instead).
+    // ★ T318: reuse the views already in the stack. Rebuilding them on every call put
+    // fresh controls into the window on each refresh tick (the summary header and every
+    // project header), and macOS 26 leaks an NSKeyValueDependency per insertion.
+    private var placeholderLabel: NSTextField?
+    private var pairs: [(dot: StatusDot, label: NSTextField)] = []
+
     func configure(placeholder: String? = nil, counts: [(String, Int)]) {
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        if counts.isEmpty, let placeholder = placeholder, !placeholder.isEmpty {
-            let tl = NSTextField(labelWithString: placeholder)
+        let showPlaceholder = counts.isEmpty && !(placeholder ?? "").isEmpty
+        if showPlaceholder, placeholderLabel == nil {
+            let tl = NSTextField(labelWithString: "")
             tl.font = Theme.rounded(11, .bold)
             tl.textColor = .labelColor
-            stack.addArrangedSubview(tl)
+            stack.insertArrangedSubview(tl, at: 0)
+            placeholderLabel = tl
+        } else if !showPlaceholder, let tl = placeholderLabel {
+            tl.removeFromSuperview()
+            placeholderLabel = nil
         }
-        for (status, count) in counts {
+        placeholderLabel?.stringValue = placeholder ?? ""
+
+        while pairs.count < counts.count {
             let dot = StatusDot(diameter: 6, compact: true)
-            dot.apply(status)
-            let label = NSTextField(labelWithString: "\(count)")
+            let label = NSTextField(labelWithString: "")
             label.font = Theme.rounded(11, .bold)
-            label.textColor = Status.accent(status)
             stack.addArrangedSubview(dot)
             stack.setCustomSpacing(4, after: dot)
             stack.addArrangedSubview(label)
+            pairs.append((dot, label))
+        }
+        while pairs.count > counts.count {
+            let p = pairs.removeLast()
+            p.dot.removeFromSuperview()
+            p.label.removeFromSuperview()
+        }
+        for ((status, count), p) in zip(counts, pairs) {
+            p.dot.apply(status)
+            p.label.stringValue = "\(count)"
+            p.label.textColor = Status.accent(status)
         }
     }
 }
@@ -1760,8 +1781,7 @@ func resetCountdown(_ epoch: Double) -> String {
 
 /// One gauge line: [icon] [pct%] [micro bar] [footnote].
 final class MetricLine: NSView {
-    /// Column geometry. The two presets differ only in how much room the line has:
-    /// `.grid` gets half a header, `.trio` gets a third. Everything `.trio` shaves
+    /// Column geometry. A trio column is a third of the header; everything it shaves
     /// (a point of leading, a point of type) is what buys the bar enough width to
     /// still read as a bar at that size.
     struct Style {
@@ -1769,25 +1789,15 @@ final class MetricLine: NSView {
         let iconW: CGFloat
         let gap: CGFloat
         let pctW: CGFloat
-        // ★ Right-aligning the percentage lines up the digits' RIGHT edges, and pays for
-        // it with a variable gap on the LEFT: the column is sized for "100%", so a
-        // 2-digit reading floats ~7pt off the icon (measured). The grid can afford that —
-        // its four lines read as one table. The trio can't: its cards are ~70pt at rest,
-        // so the same gap reads as a hole between an icon and its own number.
-        let pctAlign: NSTextAlignment
         let footW: CGFloat
         let pctFont: NSFont
         let barMin: CGFloat
         let barMinPriority: NSLayoutConstraint.Priority
 
-        static let grid = Style(height: 23, iconW: 12, gap: 6, pctW: 30, pctAlign: .right, footW: 37,
-                                pctFont: Theme.roundedMono(11.5, .bold),
-                                barMin: 60, barMinPriority: .required)
-        // barMin drops to 6 here AND stops being required: a trio card that has
-        // given up width to its focused neighbour is ~73pt wide, far under the
-        // 60pt floor the grid's bar insists on. Left required, that floor would
-        // make the strip's own width arithmetic unsatisfiable and Auto Layout
-        // would break a card's width to keep a progress bar happy.
+        // barMin is 6 AND not required: a trio card that has given up width to its
+        // focused neighbour is ~73pt wide. Left required, a bigger floor would make
+        // the strip's own width arithmetic unsatisfiable and Auto Layout would break
+        // a card's width to keep a progress bar happy.
         // ★ The account panel's rows use this SAME preset, to the point — same icon
         // box, same gaps, same figure slot, same face, same countdown slot — because
         // the panel hangs directly under the card it belongs to and the two are read
@@ -1801,7 +1811,7 @@ final class MetricLine: NSView {
         // drops the sign (see `configure`), and why a countdown of ten days or more
         // drops its hours (see `resetCountdown`). Both slots are sized for what they
         // can now actually be handed; widening either is what puts the dead air back.
-        static let trio = Style(height: 17, iconW: 12, gap: 2, pctW: 25, pctAlign: .left, footW: 36,
+        static let trio = Style(height: 17, iconW: 12, gap: 2, pctW: 25, footW: 36,
                                 pctFont: Theme.roundedMono(10.5, .bold),
                                 barMin: 6, barMinPriority: .defaultHigh)
     }
@@ -1812,7 +1822,7 @@ final class MetricLine: NSView {
     private let bar: MicroProgressBar
     private let footField = NSTextField(labelWithString: "")
 
-    init(symbol: String, accessibility: String, style: Style = .grid) {
+    init(symbol: String, accessibility: String, style: Style) {
         self.style = style
         self.bar = MicroProgressBar(minWidth: style.barMin, minWidthPriority: style.barMinPriority)
         super.init(frame: .zero)
@@ -1823,7 +1833,9 @@ final class MetricLine: NSView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         pctField.font = style.pctFont
-        pctField.alignment = style.pctAlign
+        // ★ Left, not right: right-aligning floats a 2-digit reading ~7pt off its
+        // icon in a slot sized for "100%", and at ~70pt per card that reads as a hole.
+        pctField.alignment = .left
         footField.font = .monospacedSystemFont(ofSize: 9.5, weight: .medium)
         footField.textColor = .labelColor
         footField.alignment = .right
@@ -1976,16 +1988,12 @@ private final class PlanChip: NSView {
     }
 }
 
-/// Two MetricLines on one pane of glass. In `.grid` form a hairline separates them,
-/// starting at the percentage column so it reads as a rule under the top row rather
-/// than a cut across the card. In `.trio` form an identity row (name + plan) takes
-/// that job instead and the card wears a 2pt brand edge along its top.
+/// One column of QuotaTrio: an identity row (name + plan) over two MetricLines,
+/// with a 2pt brand edge along its top.
 final class MetricCard: NSView {
-    private let glow = CALayer()   // clay counter-lobe, behind bg
     private let bg = CALayer()
-    private let divider = CALayer()
     private let accentEdge = CALayer()
-    private let accent: NSColor?
+    private let accent: NSColor
     private let nameLabel = NSTextField(labelWithString: "")
     private let planChip = PlanChip()
     private let spinner = NSProgressIndicator()
@@ -2024,34 +2032,22 @@ final class MetricCard: NSView {
     /// Advertises with a pointing hand: the machine card opens Activity Monitor, an
     /// agent card opens its account panel. A card with nothing behind it stays inert
     /// rather than promising a panel that would come up empty.
+    /// Hover comes from QuotaTrio (one tracking area for the whole strip, so the
+    /// pointer crossing a gap doesn't flicker) — don't add one here.
     var clickable = false {
         didSet {
             guard clickable != oldValue else { return }   // written on every refresh tick
             window?.invalidateCursorRects(for: self)
-            // Trio cards get their hover from QuotaTrio (one tracking area for the
-            // whole strip, so the pointer crossing a gap doesn't flicker). A second
-            // tracking area here would fight it.
-            if clickable && accent == nil && trackingAreas.isEmpty {
-                addTrackingArea(NSTrackingArea(rect: .zero,
-                                               options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                               owner: self))
-            }
         }
     }
-    private var hovering = false
 
-    /// ★ Trio form drawn inside ONE shared shell rather than as three separate cards
-    /// (2026-09-04, user's call): the strip paints the pane and its border, each card
-    /// paints only its own contents, the hairline seam on its leading edge, and its
-    /// hover block. Three panes 7pt apart read as three unrelated widgets; one pane
-    /// with two hairlines reads as one instrument with three columns, which is what
-    /// they are.
-    var seamless = false {
-        didSet {
-            guard seamless != oldValue else { return }
-            applyChrome(); needsLayout = true
-        }
-    }
+    // ★ Drawn inside ONE shared shell rather than as three separate cards
+    // (2026-09-04, user's call): the strip paints the pane and its border, each card
+    // paints only its own contents, the hairline seam on its leading edge, and its
+    // hover block. Three panes 7pt apart read as three unrelated widgets; one pane
+    // with two hairlines reads as one instrument with three columns, which is what
+    // they are.
+
     /// Every column but the first carries the seam that separates it from the one
     /// before. Drawn by the CARD, not the strip, so it travels with the card when a
     /// hover re-deals the widths — a seam painted on the strip would lag the animation.
@@ -2079,7 +2075,7 @@ final class MetricCard: NSView {
     }
 
     /// Set by QuotaTrio on the card the pointer is over (or the one whose panel is
-    /// open) — the same chrome `hovering` gives the grid cards.
+    /// open).
     var focused = false {
         didSet { if focused != oldValue { applyChrome() } }
     }
@@ -2087,25 +2083,20 @@ final class MetricCard: NSView {
     override func resetCursorRects() {
         if clickable { addCursorRect(bounds, cursor: .pointingHand) }
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true; applyChrome() }
-    override func mouseExited(with event: NSEvent) { hovering = false; applyChrome() }
 
-    /// `identity` non-nil switches the card to trio form. `accent` is both the name's
-    /// color and the top edge's — one hue naming the card twice, which is what
-    /// replaces the avatar circle the design started with.
-    init(top: MetricLine, bottom: MetricLine, identity: String? = nil, accent: NSColor? = nil) {
+    /// `accent` is both the name's color and the top edge's — one hue naming the
+    /// card twice, which is what replaces the avatar circle the design started with.
+    init(top: MetricLine, bottom: MetricLine, identity: String, accent: NSColor?) {
         self.top = top
         self.bottom = bottom
-        self.accent = identity == nil ? nil : (accent ?? .tertiaryLabelColor)
+        self.accent = accent ?? .tertiaryLabelColor
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        bg.cornerRadius = Theme.chip
+        bg.cornerRadius = 6
         bg.cornerCurve = .continuous
-        bg.borderWidth = 1
-        layer?.addSublayer(glow)
+        accentEdge.cornerRadius = 1
         layer?.addSublayer(bg)
-        layer?.addSublayer(divider)
         layer?.addSublayer(accentEdge)
         seam.isHidden = true
         layer?.addSublayer(seam)
@@ -2120,23 +2111,6 @@ final class MetricCard: NSView {
         addSubview(top)
         addSubview(bottom)
 
-        guard let identity else {
-            divider.isHidden = false
-            NSLayoutConstraint.activate([
-                top.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-                top.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-                top.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-
-                bottom.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-                bottom.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-                bottom.topAnchor.constraint(equalTo: top.bottomAnchor),
-                bottom.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            ])
-            applyChrome()
-            return
-        }
-
-        divider.isHidden = true
         nameLabel.stringValue = identity
         nameLabel.font = Theme.rounded(10.5, .semibold)
         // The machine column has no brand hue; its NAME still reads in full label
@@ -2203,27 +2177,15 @@ final class MetricCard: NSView {
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        if seamless {
-            // A hover block inset from the shell, not a pane: run to the edges it
-            // would paint over the strip's own border and its rounded corners.
-            bg.frame = bounds.insetBy(dx: 3, dy: 3)
-            bg.cornerRadius = 6
-            seam.frame = CGRect(x: -seamOffset - 0.5, y: 10, width: 1,
-                                height: max(0, bounds.height - 20))
-        } else {
-            layoutChipSurface(fill: bg, glow: glow, bounds: bounds, radius: Theme.chip)
-        }
-        // Starts at the percentage column, runs out to the card's edge.
-        let inset = 10 + MetricLine.Style.grid.iconW + MetricLine.Style.grid.gap
-        divider.frame = CGRect(x: inset, y: bounds.height / 2 - 0.5,
-                               width: max(0, bounds.width - inset), height: 1)
-        // Inset by half the corner radius so the edge stops before the curve starts
-        // — run full width it pokes out of the rounded corners as two square ears.
-        // Seamless has no corners of its own; there the edge lines up with the
-        // content instead, which is what makes the three read as one row of columns.
-        let r = seamless ? 16 : min(Theme.chip, bounds.width / 2)
-        accentEdge.frame = CGRect(x: r / 2, y: bounds.height - 2,
-                                  width: max(0, bounds.width - r), height: 2)
+        // A hover block inset from the shell, not a pane: run to the edges it
+        // would paint over the strip's own border and its rounded corners.
+        bg.frame = bounds.insetBy(dx: 3, dy: 3)
+        seam.frame = CGRect(x: -seamOffset - 0.5, y: 10, width: 1,
+                            height: max(0, bounds.height - 20))
+        // The edge lines up with the content rather than running full width, which
+        // is what makes the three read as one row of columns.
+        accentEdge.frame = CGRect(x: 8, y: bounds.height - 2,
+                                  width: max(0, bounds.width - 16), height: 2)
         CATransaction.commit()
     }
 
@@ -2234,26 +2196,9 @@ final class MetricCard: NSView {
 
     private func applyChrome() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        if seamless {
-            glow.shadowOpacity = 0
-            bg.shadowOpacity = 0
-            bg.borderWidth = 0
-            bg.backgroundColor = (hovering || focused) ? Theme.cardFillHover.cg(in: self) : nil
-            seam.backgroundColor = Theme.hairline.cg(in: self)
-        } else {
-            styleChipSurface(fill: bg, glow: glow, in: self)
-        }
-        divider.backgroundColor = Theme.hairline.cg(in: self)
-        if let accent {
-            accentEdge.backgroundColor = accent.cg(in: self)
-            accentEdge.cornerRadius = 1
-        } else {
-            accentEdge.isHidden = true
-        }
-        if !seamless, hovering || focused {
-            bg.backgroundColor = Theme.cardFillHover.cg(in: self)
-            bg.borderColor = (accent ?? Status.usageGreen).withAlphaComponent(0.45).cg(in: self)
-        }
+        bg.backgroundColor = focused ? Theme.cardFillHover.cg(in: self) : nil
+        seam.backgroundColor = Theme.hairline.cg(in: self)
+        accentEdge.backgroundColor = accent.cg(in: self)
         CATransaction.commit()
     }
 }
@@ -3573,8 +3518,8 @@ final class PctCapsule: NSView {
 // MARK: - ModelChip (the session's current model, last column of the usage line)
 //
 // A compact tinted capsule reading "Opus 5" / "Sonnet 5" / "Haiku 4.5", the label in its
-// family's semantic hue over a pale wash of the same (Status.modelTint: Opus 紫 /
-// Sonnet 青 / Haiku 琥珀). Same material and metrics as PctCapsule, its neighbour on that
+// price tier's hue over a pale wash of the same (Status.modelTint: Fable 橙 / Opus 紫 /
+// Sonnet 蓝 / Haiku 绿 / other 灰). Same material and metrics as PctCapsule, its neighbour on that
 // line, so the two read as one family of chips. No ✦ marker: the fill already separates
 // it from the bare ⏱/◆ figures, and a glyph inside a colored capsule only crowds it.
 // Collapses to intrinsic .zero on an empty label (model unknown, or the display setting
@@ -4117,7 +4062,6 @@ final class QuotaTrio: NSView {
         for e in entries { e.card.removeFromSuperview() }
         entries = slots.enumerated().map { i, pair in
             let (slot, card) = pair
-            card.seamless = true
             card.showsLeadingSeam = i > 0
             addSubview(card)
             let leading = card.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0)
@@ -4929,7 +4873,7 @@ private final class RefreshQuotaButton: NSView {
             glyph.image = NSImage(systemSymbolName: missed > 0 ? "exclamationmark.arrow.circlepath" : "arrow.clockwise",
                                   accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 9.5, weight: .semibold))
-            glyph.contentTintColor = missed > 0 ? Status.modelHaiku : .labelColor
+            glyph.contentTintColor = missed > 0 ? Theme.proAccent : .labelColor
             inner = glyph
         }
         inner.translatesAutoresizingMaskIntoConstraints = false
@@ -4997,7 +4941,7 @@ final class HeaderStatsView: NSView {
     private let compact: Bool
     private let logoView = NSImageView()
     private let countPill = CountPill()   // every status bucket, one chip
-    private let breakChip = BreakChip()   // "🍅 48:12", left of the counts (BreakReminder)
+    private let breakChip = BreakChip()   // "🍅 48:12", left end of the title row (BreakReminder)
     /// The break-timer strip under the metric grid (BreakReminder.swift). Both hosts
     /// get it through here; it is zero-height until a chip click or the clock's 0.
     let breakPanel = BreakPanel()
@@ -5078,12 +5022,10 @@ final class HeaderStatsView: NSView {
                 // Counts sit at the far right of the identity row, opposite the logo.
                 countPill.trailingAnchor.constraint(equalTo: trailingAnchor),
                 countPill.centerYAnchor.constraint(equalTo: logoView.centerYAnchor),
-                countPill.leadingAnchor.constraint(greaterThanOrEqualTo: logoView.trailingAnchor,
+                countPill.leadingAnchor.constraint(greaterThanOrEqualTo: breakChip.trailingAnchor,
                                                    constant: 10),
-                breakChip.trailingAnchor.constraint(equalTo: countPill.leadingAnchor, constant: -8),
+                breakChip.leadingAnchor.constraint(equalTo: logoView.trailingAnchor, constant: 8),
                 breakChip.centerYAnchor.constraint(equalTo: countPill.centerYAnchor),
-                breakChip.leadingAnchor.constraint(greaterThanOrEqualTo: logoView.trailingAnchor,
-                                                   constant: 10),
 
                 trio.topAnchor.constraint(equalTo: logoView.bottomAnchor, constant: 10),
             ])

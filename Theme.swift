@@ -520,28 +520,32 @@ extension Status {
     /// trick, kept distinct from the semantic "done" dot green.
     static var usageGreen: NSColor { Theme.current.palette.usageGreen }
 
-    /// Model-family SEMANTIC tints for the usage line's third metric — Opus 紫 /
-    /// Sonnet 青 / Haiku 琥珀.
+    /// Model-family tints for the usage line's model chip, ranked by price like a
+    /// game's item rarity: Fable/Mythos 橙 > Opus 紫 > Sonnet 蓝 > Haiku 绿 > unknown 灰.
     ///
     /// The color carries the family, so it must only ever be shown for a family we
     /// actually recognise — see `modelTint`. None of these are session-status hues
     /// (the model is an attribute, never a state), so they don't belong in the
     /// `Status.accent` override system.
+    static var modelFable: NSColor  { Theme.current.palette.modelFable }
     static var modelOpus: NSColor   { Theme.current.palette.modelOpus }
     static var modelSonnet: NSColor { Theme.current.palette.modelSonnet }
     static var modelHaiku: NSColor  { Theme.current.palette.modelHaiku }
 
     /// Tint for a humanised model label ("Opus 5" / "Sonnet 5" / "Haiku 4.5") — keyed on
     /// the FAMILY (the label's first word, which is how `modelLabel` builds it). An
-    /// unrecognised family falls back to the neutral secondary label color rather than
-    /// borrowing one of the three: these hues are a claim about which family this is, and
-    /// painting an unknown model violet would assert something false.
+    /// unrecognised family falls back to neutral gray (the bottom rarity) rather than
+    /// borrowing one of the four: these hues are a claim about which tier this is, and
+    /// painting an unknown model violet would assert something false. Not
+    /// `.secondaryLabelColor` — on light that reads as black, which is how Fable looked
+    /// before it had its own tier (T309).
     static func modelTint(_ label: String) -> NSColor {
         let s = label.lowercased()
+        if s.hasPrefix("fable") || s.hasPrefix("mythos") { return modelFable }
         if s.hasPrefix("opus")   { return modelOpus }
         if s.hasPrefix("sonnet") { return modelSonnet }
         if s.hasPrefix("haiku")  { return modelHaiku }
-        return .secondaryLabelColor
+        return .systemGray
     }
 
     /// Quota-fullness tint: green under half, Claude-orange approaching the cap,

@@ -22,7 +22,7 @@ header 的 Claude / Codex 卡片点开的那个面板。代码：`AgentAccount.s
 - **旧条目不迁移，直接删**：读一条旧条目恰恰就是会触发弹窗的那个动作，所以没法「读出来再写回去」。`retireFrameworkItems()` 用一个 `UserDefaults` 开关一次性 `SecItemDelete` 掉整个 service，当前账号的副本会在下一次刷新自动重抓，别的账号退化成「首次切换需登录一次」。
 - **`store` 是先删后加，不是 `-U` 更新**：条目带着它**出生时**的 ACL，更新一条旧签名建的条目等于继承那份 ACL，弹窗照旧。
 - 丢掉了 `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`（`security` 命令没有对应选项）。login keychain 本身不进 iCloud Keychain，所以「不出这台机器」这条实际仍成立。
-- **兜底**：没有副本、或写回失败 → 开 Terminal 跑 `claude auth login --email <邮箱>`（Codex 是 `codex login`，没有邮箱参数）。行的第二行「首次切换需登录一次」就是这个状态。副本放久了被服务端作废时同样退化成登录一次——不会更糟。
+- **兜底**：没有副本、或写回失败 → 开 Terminal 跑 `claude auth login --email <邮箱>`（Codex 是 `codex login`，没有邮箱参数）。行的第二行「首次切换需登录一次」就是这个状态。登录成功后这个 Terminal 窗口自动关掉（命令尾巴 `&& exit` + App 每秒查一次窗口里还有没有进程，Terminal 自己的「shell 退出时关窗」设置常是「不关」，靠不住）；登录失败窗口留着给人看报错。副本放久了被服务端作废时同样退化成登录一次——不会更糟。
 - **移除**：右键「从列表移除」= 删账号簿那条 + 删 Keychain 副本（`security delete-generic-password`）。当前账号那行不给删（删了下次刷新又回来）。
 
 ## 行的排序与左边缘（2026-09-03）

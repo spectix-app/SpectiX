@@ -176,10 +176,16 @@ fi
 # Only ids whose own heartbeat froze >600s are dropped; live ones stay on the books.
 if [ -s "$bgfile" ]; then
   _now=$(date +%s); _agf="$dir/agents-$tty"; _keep=""; _drop=""
+  _ptp=$(cat "$dir/tp-$tty" 2>/dev/null); _sub="${_ptp%.jsonl}/subagents"
   while IFS= read -r _id; do
     [ -z "$_id" ] && continue
     _sf="$dir/agent-step-$tty-$_id"
     _last=$(stat -f %m "$_sf" 2>/dev/null)
+    # The agent's own transcript is a heartbeat too: an agent deep in one long think
+    # makes no tool call (step file frozen) for minutes, yet its transcript keeps being
+    # appended. Take whichever is newer, or the sweep drops a live agent.
+    _tm=""; [ -n "$_ptp" ] && _tm=$(stat -f %m "$_sub/agent-$_id.jsonl" 2>/dev/null)
+    [ -n "$_tm" ] && { [ -z "$_last" ] || [ "$_tm" -gt "$_last" ]; } && _last=$_tm
     [ -z "$_last" ] && _last=$(grep -o "\"id\":\"$_id\"[^}]*\"start\":[0-9]*" "$_agf" 2>/dev/null \
                                 | sed 's/.*"start"://' | head -1)
     [ -z "$_last" ] && _last=$(stat -f %m "$bgfile" 2>/dev/null || echo 0)
@@ -188,6 +194,30 @@ if [ -s "$bgfile" ]; then
     else
       _keep="$_keep$_id
 "
+      # Reconcile the roster on EVERY event, not just on this agent's own tool call:
+      # parallel launches can lose a roster row (the ledger is append-only and keeps
+      # it), and an agent in a long think may not call a tool for minutes — meanwhile
+      # the badge counts it and the sublist doesn't show it. The harness writes
+      # agent-<id>.meta.json at launch with the type AND the description, so the row
+      # comes back whole.
+      if ! grep -qF "\"id\":\"$_id\"" "$_agf" 2>/dev/null; then
+        _mj="$_sub/agent-$_id.meta.json"
+        # mkdir is the lock: several agents' hooks fire at once, and two that both saw
+        # the row missing would append it twice (the sublist shows duplicates). A hook
+        # that loses the race skips; the next event retries. A lock older than 30s was
+        # left by a killed hook — clear it so reconciling can't wedge for good.
+        [ -d "$_agf.lock" ] && [ $(( _now - $(stat -f %m "$_agf.lock") )) -gt 30 ] && rmdir "$_agf.lock" 2>/dev/null
+        if [ -n "$_ptp" ] && [ -f "$_mj" ] && mkdir "$_agf.lock" 2>/dev/null; then
+          if ! grep -qF "\"id\":\"$_id\"" "$_agf" 2>/dev/null; then
+            _mt=$(grep -o '"agentType":"[^"]*"' "$_mj" | sed 's/.*:"//; s/"$//' | tr -d '\\')
+            _md=$(grep -o '"description":"[^"]*"' "$_mj" | sed 's/.*:"//; s/"$//' | tr -d '\\')
+            _ms=$(stat -f %B "$_sub/agent-$_id.jsonl" 2>/dev/null || stat -f %B "$_mj")
+            printf '{"id":"%s","type":"%s","desc":"%s","model":"","start":%s}\n' \
+              "$_id" "$_mt" "$_md" "$_ms" >> "$_agf"
+          fi
+          rmdir "$_agf.lock"
+        fi
+      fi
     fi
   done < "$bgfile"
   if [ -n "$_drop" ]; then
@@ -488,7 +518,11 @@ case "$action" in
           # it here and the sublist recovers on the agent's very next tool call,
           # whatever lost it. Inert on the normal path: a ledgered id matches and this
           # whole block is skipped, so the common case costs one grep.
-          if ! grep -qxF "$aid" "$bgfile" 2>/dev/null; then
+          # SubagentHandback is the agent's LAST act, not proof it will keep running:
+          # re-adding it here books an agent that is already finishing, and nothing
+          # retires that entry if the hand-back reached a busy turn (measured: one such
+          # entry showed a finished agent as running for a day).
+          if [ "$tool" != "SubagentHandback" ] && ! grep -qxF "$aid" "$bgfile" 2>/dev/null; then
             printf '%s\n' "$aid" >> "$bgfile"
             agf="$dir/agents-$tty"
             # A subagent's own tool events carry agent_type; description was only ever
@@ -569,7 +603,12 @@ case "$input" in
           # which strips every copy), but the roster is what the sublist renders, so a
           # second copy would show the same agent twice. Inert on the normal path: a
           # fresh id matches nothing.
-          if [ -f "$agf" ]; then
+          # Rewrite ONLY when there is something to drop. Parallel launches fire their
+          # PostToolUse hooks concurrently, and an unconditional read-rewrite-mv here
+          # lets one hook's mv clobber a sibling's fresh append (measured 2026-10-08:
+          # 4 agents launched in the same second, ledger held 4, roster kept 2). The
+          # bare append below is atomic per line, so the common path no longer races.
+          if [ -f "$agf" ] && grep -qE "\"id\":\"$bid\"|\"end\":[0-9]" "$agf" 2>/dev/null; then
             awk -v bid="$bid" '{
               if (index($0, "\"id\":\"" bid "\"")) next
               if (match($0, /"end":[0-9]+/)) next
@@ -581,14 +620,22 @@ case "$input" in
     esac ;;
   *'"hook_event_name":"UserPromptSubmit"'*|*'"hook_event_name": "UserPromptSubmit"'*)
     case "$input" in
-      *'<task-id>'*)
+      *'<task-id>'*|*'<agent-message from='*'[Subagent hand-back]'*)
         if [ -s "$bgfile" ]; then
           # A batched wake-up can carry MULTIPLE <task-id> blocks (several agents that
           # finished while the session was busy get delivered in one UserPromptSubmit).
           # Retire EVERY id present, not just the last one — the old single-sed grabbed
           # only the final <task-id>, leaving the others stuck in the ledger (row stuck
           # blue forever). grep -oE pulls each block; strip the tags to bare ids.
-          ids=$(printf '%s' "$input" | grep -oE '<task-id>[^<]*</task-id>' | sed 's/<[^>]*>//g')
+          # A subagent that ends with SubagentHandback comes back as <agent-message
+          # from="<agentId>">\n[Subagent hand-back] instead of a <task-id> block — same id,
+          # retire it too. Require the hand-back marker: the same tag also carries an
+          # agent's mid-run messages, which must NOT retire a still-running agent. The hook
+          # input is JSON, so the quotes/newline arrive escaped: match on the id's own
+          # characters, not on the quote.
+          ids=$( { printf '%s' "$input" | grep -oE '<task-id>[^<]*</task-id>' | sed 's/<[^>]*>//g'
+                   printf '%s' "$input" | grep -oE '<agent-message from=[^A-Za-z0-9]*[A-Za-z0-9_-]+[^[<]{0,12}\[Subagent hand-back\]' \
+                     | sed -E 's/^<agent-message from=[^A-Za-z0-9]*([A-Za-z0-9_-]+).*/\1/'; } )
           if [ -n "$ids" ]; then
             grep -vxF "$ids" "$bgfile" > "$bgfile.$$.tmp" 2>/dev/null
             mv -f "$bgfile.$$.tmp" "$bgfile"
@@ -606,7 +653,7 @@ case "$input" in
             printf '%s' "$input" | AGF="$agf" STEPPRE="$dir/agent-step-$tty-" /usr/bin/python3 -c '
 import sys, os, re, json
 inp = sys.stdin.read()
-done = set(re.findall(r"<task-id>([^<]+)</task-id>", inp))
+done = set(re.findall(r"<task-id>([^<]+)</task-id>", inp)) | set(re.findall(r"<agent-message from=[^A-Za-z0-9]*([A-Za-z0-9_-]+)[^\[<]{0,12}\[Subagent hand-back\]", inp))
 if done:
     agf = os.environ["AGF"]
     out = []
