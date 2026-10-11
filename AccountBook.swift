@@ -69,6 +69,32 @@ struct RememberedAccount: Codable, Equatable {
     var oauthAccountJSON: String?
     /// Last known quota, and when. Current only for whichever account is signed in.
     var usage: AccountUsage?
+    /// Claude only: the organization this sign-in belongs to. One address can hold a
+    /// personal plan and a company Team at once; each is its own row.
+    var orgID: String? = nil
+    /// Claude only: that organization's name, to tell such rows apart on screen.
+    var organization: String? = nil
+    /// The Keychain label of this row's credential copy, when it is not `key`. Rows
+    /// from before organizations were told apart had their copy filed under the bare
+    /// address; they keep pointing at it rather than having a credential moved.
+    var vaultKey: String? = nil
+
+    /// The CLI left this account without the panel taking a copy first — a sign-in
+    /// typed into a terminal. Its refresh token has rotated since the stored copy was
+    /// made, so restoring that copy would hand the CLI a dead credential while the
+    /// panel showed the switch as done (2026-10-10: a month-old copy, refresh token
+    /// long gone). Cleared by the next capture.
+    var copyStale: Bool? = nil
+
+    var key: String { AccountBook.key(email: email, orgID: orgID) }
+    var vault: String { vaultKey ?? key }
+
+    /// The organization, when it says more than the address does. A personal plan's
+    /// is the auto-generated "<email>'s Organization".
+    var orgLabel: String? {
+        guard let o = organization, !o.isEmpty else { return nil }
+        return o.lowercased().hasPrefix(email.lowercased()) ? L("个人", "Personal") : o
+    }
 }
 
 enum AccountBook {
@@ -92,8 +118,8 @@ enum AccountBook {
     /// Main-thread only: every entry is added by the click that starts the request
     /// and removed by the completion, which probeUsage hops back to main to run.
     private static var probing: [AgentKind: Set<String>] = [:]
-    static func isProbing(_ kind: AgentKind, email: String) -> Bool {
-        probing[kind]?.contains(email) ?? false
+    static func isProbing(_ kind: AgentKind, key: String) -> Bool {
+        probing[kind]?.contains(key) ?? false
     }
     /// Posted when a request starts or lands. The header redraws on it instead of
     /// waiting out its 2.5s poll — the request exists to make a switch look immediate,
@@ -107,6 +133,26 @@ enum AccountBook {
     /// another's row, so the timestamp is the guard.
     private static var switchedAt: [AgentKind: Double] = [:]
     static func lastSwitch(_ kind: AgentKind) -> Double { switchedAt[kind] ?? 0 }
+    /// The key note() last saw signed in, so a sign-in made outside the panel (a
+    /// `claude auth login` in any terminal) counts as a switch too.
+    /// Persisted so a sign-in made while the app was closed is caught on launch.
+    private static var noted: [AgentKind: String] = [:]
+    private static func lastLive(_ kind: AgentKind) -> String? {
+        noted[kind] ?? UserDefaults.standard.string(forKey: "accountBook.lastLive.\(kind.rawValue)")
+    }
+    /// Posted when the signed-in account changes by any route. An open panel redraws
+    /// on it — it otherwise reads the book only on open.
+    static let currentDidChange = Notification.Name("SpectiXAccountCurrentDidChange")
+
+    /// Whether a click can switch to this row without a sign-in.
+    static func canSwitch(_ kind: AgentKind, _ row: RememberedAccount) -> Bool {
+        row.copyStale != true && CredentialVault.has(kind, key: row.vault)
+    }
+
+    /// Row identity: the address, plus the organization when there is one.
+    static func key(email: String, orgID: String?) -> String {
+        orgID.map { "\(email)#\($0)" } ?? email
+    }
     private static func path(_ kind: AgentKind) -> String {
         "\(dir)/accounts-\(kind.rawValue).json"
     }
@@ -118,9 +164,22 @@ enum AccountBook {
         if let c = cache[kind] { return c }
         var loaded = (try? Data(contentsOf: URL(fileURLWithPath: path(kind))))
             .flatMap { try? JSONDecoder().decode([RememberedAccount].self, from: $0) } ?? []
+        var dirty = false
+        // Rows from before organizations were told apart: read the org out of the
+        // stored oauthAccount, and keep the credential copy where it was filed.
+        for i in loaded.indices where loaded[i].orgID == nil {
+            guard let o = orgFields(loaded[i].oauthAccountJSON) else { continue }
+            loaded[i].vaultKey = loaded[i].email
+            loaded[i].orgID = o.id
+            loaded[i].organization = o.name
+            dirty = true
+        }
         let needsPinning = loaded.contains { $0.addedAt == nil }
         loaded.sort { ($0.addedAt ?? $0.lastSeen) < ($1.addedAt ?? $1.lastSeen) }
-        guard needsPinning else { cache[kind] = loaded; return loaded }
+        guard needsPinning else {
+            if dirty { save(kind, loaded) } else { cache[kind] = loaded }
+            return loaded
+        }
         // Pin the position of every legacy row on first read. Waiting for note() to
         // do it wouldn't work: note() only ever sees the CURRENT account, so a row
         // for any other address would keep falling back to lastSeen — which switchTo
@@ -142,15 +201,48 @@ enum AccountBook {
     /// doing it is one sign-in, once, for an account the user has never switched away
     /// from; the row says so before they click.
     static func note(_ kind: AgentKind, _ account: AgentAccount?) {
-        guard let account, let email = account.email else { return }
+        guard let account, let email = account.email, let key = account.key else { return }
+        // A different account than last tick, by whatever route — the panel, or a
+        // login typed into a terminal. Readings taken before now belong to the one
+        // that left, exactly as after a panel switch; the first tick of a run has
+        // nothing to compare with and is not a switch.
+        let prev = lastLive(kind)
+        noted[kind] = key
+        if prev != key { UserDefaults.standard.set(key, forKey: "accountBook.lastLive.\(kind.rawValue)") }
+        if let prev, prev != key {
+            switchedAt[kind] = Date().timeIntervalSince1970
+            // switchTo records the key itself, so reaching here means the CLI moved
+            // without us and the account it left was never copied on the way out.
+            var book = list(kind)
+            if let i = book.firstIndex(where: { $0.key == prev }), book[i].copyStale != true {
+                book[i].copyStale = true
+                save(kind, book)
+            }
+            // Deferred: the header redraw these trigger calls back into note(), and
+            // posting inline recursed until the stack ran out (2026-10-10).
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: currentDidChange, object: nil)
+                NotificationCenter.default.post(name: quotaDidChange, object: nil)
+            }
+        }
         var book = list(kind)
+        // An address known to carry an organization, read without one: the CLI's
+        // write caught half-done. Filing it would mint an org-less row that the next
+        // tick adopts — along with the other row's credential copy.
+        if account.orgID == nil, book.contains(where: { $0.email == email && $0.orgID != nil }) { return }
         var entry = RememberedAccount(email: email,
                                       displayName: account.displayName,
                                       plan: account.plan,
                                       accountID: account.accountID,
                                       lastSeen: Date().timeIntervalSince1970,
-                                      oauthAccountJSON: nil)
-        if let i = book.firstIndex(where: { $0.email == email }) {
+                                      oauthAccountJSON: nil,
+                                      orgID: account.orgID,
+                                      organization: account.organization)
+        // An org-less row for this address (no stored oauthAccount to backfill from)
+        // is this account seen before organizations were told apart: adopt it.
+        let i = book.firstIndex(where: { $0.key == key })
+            ?? book.firstIndex(where: { $0.email == email && $0.orgID == nil && account.orgID != nil })
+        if let i {
             // Known address with the same details: nothing to record. Only lastSeen
             // would move, and that is not worth a write per second.
             var same = book[i]; same.lastSeen = entry.lastSeen
@@ -162,6 +254,7 @@ enum AccountBook {
             // Carried over, not re-derived: without this the ~1 Hz caller would find
             // a difference every tick and write the book to disk every tick.
             entry.usage = same.usage
+            entry.vaultKey = same.vaultKey ?? (same.orgID == nil && entry.orgID != nil ? same.email : nil)
             if same == entry { return }
             if kind == .claude { entry.oauthAccountJSON = claudeOAuthAccountJSON() ?? entry.oauthAccountJSON }
             book[i] = entry
@@ -176,14 +269,14 @@ enum AccountBook {
     /// File the live quota figures against the account they actually belong to —
     /// which is always the signed-in one; see `AccountUsage`. Called from the same
     /// ~1 Hz path as note(), so it writes only when a number really moved.
-    static func noteUsage(_ kind: AgentKind, email: String?, _ u: UsageSnapshot?) {
-        guard let email, let u, u.sessionPct != nil || u.weekPct != nil else { return }
+    static func noteUsage(_ kind: AgentKind, key: String?, _ u: UsageSnapshot?) {
+        guard let key, let u, u.sessionPct != nil || u.weekPct != nil else { return }
         // Measured before the switch, so it describes the previous account. Drop it
         // and wait for the re-probe; the row meanwhile shows its OWN last snapshot,
         // which is old but at least true of the account it sits on.
         guard u.updatedAt > lastSwitch(kind) else { return }
         var book = list(kind)
-        guard let i = book.firstIndex(where: { $0.email == email }) else { return }
+        guard let i = book.firstIndex(where: { $0.key == key }) else { return }
         let fresh = AccountUsage(sessionPct: u.sessionPct,
                                  weekPct: u.weekPct,
                                  sessionResetsAt: u.sessionResetsAt,
@@ -213,19 +306,20 @@ enum AccountBook {
     /// because those seconds are the whole problem: measured end to end, the CLI probe
     /// takes 5.1s and sits behind a throttle window of up to 15s, and until it lands
     /// the header has nothing current to draw for the account the user just picked.
-    static func probeUsage(_ kind: AgentKind, email: String, done: @escaping (Bool) -> Void) {
-        probing[kind, default: []].insert(email)
+    static func probeUsage(_ kind: AgentKind, key: String, done: @escaping (Bool) -> Void) {
+        guard let vault = list(kind).first(where: { $0.key == key })?.vault else { done(false); return }
+        probing[kind, default: []].insert(key)
         NotificationCenter.default.post(name: quotaDidChange, object: nil)
         DispatchQueue.global(qos: .userInitiated).async {
-            let reading = CredentialVault.usageResponse(kind, email: email).flatMap(parseUsageBody)
+            let reading = CredentialVault.usageResponse(kind, key: vault).flatMap(parseUsageBody)
             DispatchQueue.main.async {
-                probing[kind]?.remove(email)
+                probing[kind]?.remove(key)
                 // Every exit from here changes what the header should draw — a filed
                 // reading, or merely the spinner going away on a refusal.
                 defer { NotificationCenter.default.post(name: quotaDidChange, object: nil) }
                 guard let reading else { done(false); return }
                 var book = list(kind)
-                guard let i = book.firstIndex(where: { $0.email == email }) else { done(false); return }
+                guard let i = book.firstIndex(where: { $0.key == key }) else { done(false); return }
                 book[i].usage = reading
                 save(kind, book)
                 done(true)
@@ -269,38 +363,71 @@ enum AccountBook {
 
     /// Drop the address and the credential copy behind it. The CLI's own sign-in is
     /// untouched.
-    static func forget(_ kind: AgentKind, email: String) {
-        let book = list(kind).filter { $0.email != email }
-        save(kind, book)
-        CredentialVault.forget(kind, email: email)
+    static func forget(_ kind: AgentKind, key: String) {
+        guard let row = list(kind).first(where: { $0.key == key }) else { return }
+        save(kind, list(kind).filter { $0.key != key })
+        // A legacy row's copy sits under the bare address — only delete it when no
+        // other row still points there.
+        if !list(kind).contains(where: { $0.vault == row.vault }) {
+            CredentialVault.forget(kind, key: row.vault)
+        }
     }
 
     /// Make `email` the CLI's live account from its stored copy. False = no usable
     /// copy; the caller falls back to switchCommand. The account being left is
     /// re-captured first so its rotated tokens aren't lost.
-    static func switchTo(_ kind: AgentKind, email: String) -> Bool {
+    static func switchTo(_ kind: AgentKind, key: String) -> Bool {
         let current = kind == .claude ? AgentAccounts.claude() : AgentAccounts.codex()
-        if let cur = current?.email, cur != email {
-            CredentialVault.capture(kind, email: cur)
-        }
-        guard CredentialVault.restore(kind, email: email) else { return false }
-        if kind == .claude,
-           let json = list(kind).first(where: { $0.email == email })?.oauthAccountJSON {
+        guard let target = list(kind).first(where: { $0.key == key }) else { return false }
+        // Copy the account being left even when the target needs a sign-in: that
+        // sign-in is about to move the CLI off it, and without a copy it would come
+        // back stale too.
+        if current?.key != key { prepareLogin(kind, current: current) }
+        guard target.copyStale != true else { return false }
+        guard CredentialVault.restore(kind, key: target.vault) else { return false }
+        if kind == .claude, let json = target.oauthAccountJSON {
             writeClaudeOAuthAccount(json)
         }
         switchedAt[kind] = Date().timeIntervalSince1970
+        // Already counted as a switch; don't let the next tick count it again.
+        noted[kind] = key
+        UserDefaults.standard.set(key, forKey: "accountBook.lastLive.\(kind.rawValue)")
         // Bookkeeping only. The row deliberately stays put: the panel rebuilds
         // straight after this, and a list that reordered itself under the click would
         // leave the pointer hovering a different account than the one just picked.
         var book = list(kind)
-        if let i = book.firstIndex(where: { $0.email == email }) {
+        if let i = book.firstIndex(where: { $0.key == key }) {
             book[i].lastSeen = Date().timeIntervalSince1970
             save(kind, book)
         }
         return true
     }
 
+    /// Copy the signed-in account before a sign-in moves the CLI off it — the panel's
+    /// "add account", or a switch that has to fall back to the CLI's login. Runs on
+    /// the user's click, like switchTo.
+    static func prepareLogin(_ kind: AgentKind, current: AgentAccount? = nil) {
+        let current = current ?? (kind == .claude ? AgentAccounts.claude() : AgentAccounts.codex())
+        guard let cur = current?.key,
+              CredentialVault.capture(kind, key: list(kind).first(where: { $0.key == cur })?.vault ?? cur)
+        else { return }
+        var book = list(kind)
+        if let i = book.firstIndex(where: { $0.key == cur }) { book[i].copyStale = nil; save(kind, book) }
+        // The login that follows changes the account outside switchTo; it was copied,
+        // so the next tick must not read it as left uncopied.
+        noted[kind] = nil
+        UserDefaults.standard.removeObject(forKey: "accountBook.lastLive.\(kind.rawValue)")
+    }
+
     // MARK: ~/.claude.json oauthAccount
+
+    private static func orgFields(_ json: String?) -> (id: String, name: String?)? {
+        guard let json,
+              let o = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let id = o["organizationUuid"] as? String, !id.isEmpty
+        else { return nil }
+        return (id, o["organizationName"] as? String)
+    }
 
     private static let claudeConfig = "\(NSHomeDirectory())/.claude.json"
 

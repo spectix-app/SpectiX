@@ -4,7 +4,9 @@ import Cocoa
 //
 // A frosted-glass panel that reports, from the hook's append-only event log, how
 // you've been using Claude Code. Top: the Insights title and a time-range switch
-// (今日/本周/本月/全部) that scopes everything below. Then five sections:
+// (今日/本周/本月/全部) that scopes everything below. Then four titled blocks
+// (SectionBlock, design/insights-sections-3-proposals.html 方案 13): 效能 and 成绩 are the
+// ImpactPanel; 帮了你什么 holds the first item below; 消耗 holds the rest.
 //   帮了你什么   — a 3-card row off impact.jsonl: auto jumps / nudges / waiting saved.
 //                 The 效能 panel above it is folded by default and leads with a score;
 //                 these are the plain counts that say what the app actually did.
@@ -79,6 +81,10 @@ final class StatsPane: NSView {
     private let costSub = StatsPane.subCaption()
 
     private let heatmap = HeatmapView()
+
+    // The page's last two blocks (方案 13); the 效能 panel above draws the first two.
+    private let helpBlock = SectionBlock(accent: StatsPane.auto)
+    private let costBlock = SectionBlock(accent: Metric.accent(.tokens))
 
     // 本周配额消耗 — one horizontal bar split into per-day segments (+ a remainder
     // segment), driven by usage.json's week_pct and the current reset window.
@@ -173,8 +179,10 @@ final class StatsPane: NSView {
         // 帮了你什么 — 3 cards straight off impact.jsonl, under the 效能 panel because
         // that panel ships folded: its bar shows a score and one figure, and the three
         // numbers a user actually judges the app by were only reachable by expanding it.
-        let helpLabel = Self.sectionLabel(L("SpectiX 帮了你什么", "What SpectiX did for you"))
-        doc.addSubview(helpLabel)
+        helpBlock.set(title: L("帮了你什么", "What it did for you"))
+        helpBlock.set(purpose: L("它替你做了哪几件事", "What SpectiX did on your behalf"))
+        helpBlock.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(helpBlock)
         let helpRow = NSStackView(views: [
             card(helpJumpV,   sub: helpJumpSub,   caption: L("自动跳转", "Auto jumps"),     color: Self.auto),
             card(helpNotifyV, sub: helpNotifySub, caption: L("提醒你", "Nudges"),           color: Status.accent("needs")),
@@ -184,11 +192,18 @@ final class StatsPane: NSView {
         helpRow.distribution = .fillEqually
         helpRow.spacing = Theme.gap
         helpRow.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(helpRow)
+        helpBlock.content.addSubview(helpRow)
+
+        // 消耗 — everything from 概览 down answers 「Claude 花了我多少」.
+        costBlock.set(title: L("消耗", "Spend"))
+        costBlock.set(purpose: L("Claude 用了多少 token 和额度", "Tokens and quota Claude used"))
+        costBlock.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(costBlock)
+        let cc = costBlock.content
 
         // 概览 — 2×2 card grid.
         let ovLabel = Self.sectionLabel(L("概览", "Overview"))
-        doc.addSubview(ovLabel)
+        cc.addSubview(ovLabel)
 
         let row1 = NSStackView(views: [
             card(runsV, sub: runsSub, caption: L("总会话", "Total sessions"), color: Status.accent("working")),
@@ -208,50 +223,50 @@ final class StatsPane: NSView {
         cards.distribution = .fillEqually
         cards.spacing = Theme.gap
         cards.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(cards)
+        cc.addSubview(cards)
 
         // 本周配额消耗 — segmented bar between 概览 and the heatmap.
-        doc.addSubview(quotaTitle)
+        cc.addSubview(quotaTitle)
         quotaUsed.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(quotaUsed)
-        doc.addSubview(quotaRange)
+        cc.addSubview(quotaUsed)
+        cc.addSubview(quotaRange)
         quotaBar.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(quotaBar)
+        cc.addSubview(quotaBar)
 
         // 会话活动热力图.
         let heatTitle = Self.sectionLabel(L("每日 Token 用量", "Daily token usage"))
-        doc.addSubview(heatTitle)
+        cc.addSubview(heatTitle)
         let heatCap = NSTextField(labelWithString: L("过去 26 周", "Last 26 weeks"))
         heatCap.font = Theme.font(10.5, .regular)
         heatCap.textColor = .tertiaryLabelColor
         heatCap.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(heatCap)
+        cc.addSubview(heatCap)
         heatmap.accent = Status.accent("done")
         heatmap.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(heatmap)
+        cc.addSubview(heatmap)
 
         // 分布.
         let distLabel = Self.sectionLabel(L("分布", "Distribution"))
-        doc.addSubview(distLabel)
-        doc.addSubview(distCap)
+        cc.addSubview(distLabel)
+        cc.addSubview(distCap)
         modeSeg.selectedSegment = 0
         modeSeg.target = self
         modeSeg.action = #selector(modeChanged)
         modeSeg.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(modeSeg)
+        cc.addSubview(modeSeg)
 
         // Breakdown rows flow directly in the document (no nested scroll).
         listStack.orientation = .vertical
         listStack.spacing = 6
         listStack.alignment = .leading
         listStack.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(listStack)
+        cc.addSubview(listStack)
 
         emptyLabel.font = Theme.font(12.5, .regular)
         emptyLabel.textColor = .tertiaryLabelColor
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(emptyLabel)
+        cc.addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
             // Pinned range control at the pane top, then a hairline, then the scroll.
@@ -270,67 +285,74 @@ final class StatsPane: NSView {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
 
             // Document tracks the clip's width (see pinDocumentWidth, called below);
-            // its height follows the content chain (ovLabel.top → listStack.bottom),
+            // its height follows the content chain (impactPanel.top → costBlock.bottom),
             // so the report scrolls.
 
             impactPanel.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
             impactPanel.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
             impactPanel.topAnchor.constraint(equalTo: doc.topAnchor, constant: Theme.pad),
 
-            helpLabel.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            helpLabel.topAnchor.constraint(equalTo: impactPanel.bottomAnchor, constant: 18),
-            helpRow.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            helpRow.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
-            helpRow.topAnchor.constraint(equalTo: helpLabel.bottomAnchor, constant: 8),
+            helpBlock.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            helpBlock.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            helpBlock.topAnchor.constraint(equalTo: impactPanel.bottomAnchor, constant: 12),
+            helpRow.leadingAnchor.constraint(equalTo: helpBlock.content.leadingAnchor),
+            helpRow.trailingAnchor.constraint(equalTo: helpBlock.content.trailingAnchor),
+            helpRow.topAnchor.constraint(equalTo: helpBlock.content.topAnchor),
+            helpRow.bottomAnchor.constraint(equalTo: helpBlock.content.bottomAnchor),
             // 79 = one row of the 2×2 grid below (158 split in two), so the four card
             // heights on this page match instead of nearly matching.
             helpRow.heightAnchor.constraint(equalToConstant: 79),
 
-            ovLabel.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            ovLabel.topAnchor.constraint(equalTo: helpRow.bottomAnchor, constant: 18),
+            costBlock.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            costBlock.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            costBlock.topAnchor.constraint(equalTo: helpBlock.bottomAnchor, constant: 12),
+            costBlock.bottomAnchor.constraint(equalTo: doc.bottomAnchor, constant: -Theme.pad),
 
-            cards.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            cards.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            ovLabel.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            ovLabel.topAnchor.constraint(equalTo: cc.topAnchor),
+
+            cards.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            cards.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             cards.topAnchor.constraint(equalTo: ovLabel.bottomAnchor, constant: 8),
             cards.heightAnchor.constraint(equalToConstant: 158),
             row1.widthAnchor.constraint(equalTo: cards.widthAnchor),
             row2.widthAnchor.constraint(equalTo: cards.widthAnchor),
 
-            quotaTitle.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            quotaTitle.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
             quotaTitle.topAnchor.constraint(equalTo: cards.bottomAnchor, constant: 16),
-            quotaUsed.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            quotaUsed.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             quotaUsed.centerYAnchor.constraint(equalTo: quotaRange.centerYAnchor),
             quotaUsed.leadingAnchor.constraint(greaterThanOrEqualTo: quotaRange.trailingAnchor, constant: 8),
-            quotaRange.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            quotaRange.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
             quotaRange.trailingAnchor.constraint(lessThanOrEqualTo: quotaUsed.leadingAnchor, constant: -8),
             quotaRange.topAnchor.constraint(equalTo: quotaTitle.bottomAnchor, constant: 3),
-            quotaBar.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            quotaBar.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            quotaBar.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            quotaBar.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             quotaBar.topAnchor.constraint(equalTo: quotaRange.bottomAnchor, constant: 8),
             quotaBar.heightAnchor.constraint(equalToConstant: 52),
 
-            heatTitle.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            heatTitle.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
             heatTitle.topAnchor.constraint(equalTo: quotaBar.bottomAnchor, constant: 16),
-            heatCap.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            heatCap.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             heatCap.firstBaselineAnchor.constraint(equalTo: heatTitle.firstBaselineAnchor),
-            heatmap.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            heatmap.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            heatmap.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            heatmap.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             heatmap.topAnchor.constraint(equalTo: heatTitle.bottomAnchor, constant: 8),
             heatmap.heightAnchor.constraint(equalToConstant: 130),
 
-            distLabel.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
+            distLabel.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
             distLabel.topAnchor.constraint(equalTo: heatmap.bottomAnchor, constant: 16),
-            distCap.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            distCap.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             distCap.leadingAnchor.constraint(greaterThanOrEqualTo: distLabel.trailingAnchor, constant: 8),
             distCap.firstBaselineAnchor.constraint(equalTo: distLabel.firstBaselineAnchor),
-            modeSeg.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            modeSeg.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            modeSeg.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            modeSeg.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             modeSeg.topAnchor.constraint(equalTo: distLabel.bottomAnchor, constant: 8),
 
-            listStack.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: Theme.pad),
-            listStack.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -Theme.pad),
+            listStack.leadingAnchor.constraint(equalTo: cc.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: cc.trailingAnchor),
             listStack.topAnchor.constraint(equalTo: modeSeg.bottomAnchor, constant: 10),
-            listStack.bottomAnchor.constraint(equalTo: doc.bottomAnchor, constant: -Theme.pad),
+            listStack.bottomAnchor.constraint(equalTo: cc.bottomAnchor),
 
             emptyLabel.topAnchor.constraint(equalTo: listStack.topAnchor),
             emptyLabel.leadingAnchor.constraint(equalTo: listStack.leadingAnchor, constant: 2),
@@ -374,6 +396,9 @@ final class StatsPane: NSView {
         timeSub.stringValue = t.pairedTasks > 0 ? L("平均 \(Self.fmtDur(t.durSec / t.pairedTasks))/会话", "\(Self.fmtDur(t.durSec / t.pairedTasks)) avg/session") : L("无计时", "No timing")
         costV.stringValue = t.costUSD > 0 ? Self.fmtUSD(t.costUSD) : "—"
         costSub.stringValue = Self.tokenSummary(t)
+        let tok = imp.metric(.tokens).value
+        let spend = [tok > 0 ? Tok.fmt(tok) : nil, t.costUSD > 0 ? Self.fmtUSD(t.costUSD) : nil]
+        costBlock.set(summary: spend.compactMap { $0 }.joined(separator: " · "), tail: "")
 
         heatmap.days = store.heatmap(days: 26 * 7)
         updateQuotaBar()
@@ -387,6 +412,8 @@ final class StatsPane: NSView {
         let a = w.auto
         let jumps = a.chain + a.idle
         helpJumpV.stringValue = "\(jumps)"
+        let acts = jumps + w.control.notifies
+        helpBlock.set(summary: acts > 0 ? "\(acts)" : "", tail: L("次", acts == 1 ? "action" : "actions"))
         helpJumpSub.stringValue = jumps > 0
             ? L("答完接着跳 \(a.chain) · 闲时 \(a.idle)", "\(a.chain) chained · \(a.idle) idle")
             : L("还没自动跳过", "None yet")
@@ -505,6 +532,9 @@ final class StatsPane: NSView {
         f.textColor = .tertiaryLabelColor
         f.lineBreakMode = .byTruncatingTail
         f.maximumNumberOfLines = 1
+        // Below the document's width pin, so a long caption truncates instead of
+        // widening the whole page past the window.
+        f.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         f.translatesAutoresizingMaskIntoConstraints = false
         return f
     }

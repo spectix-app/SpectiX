@@ -4145,10 +4145,10 @@ class AppController: NSObject, NSApplicationDelegate {
         // back below. Those may be a reading lifted out of the book, and writing it
         // back would restamp it as freshly measured (and drop the `probed` flag that
         // is the only reason a fetched figure counts as live).
-        AccountBook.noteUsage(.claude, email: claude?.email, usage)
-        AccountBook.noteUsage(.codex, email: codex?.email, snap)
-        return HeaderAgentInfo(claudeUsage: headerUsage(usage, kind: .claude, email: claude?.email),
-                               codexUsage: headerUsage(snap, kind: .codex, email: codex?.email),
+        AccountBook.noteUsage(.claude, key: claude?.key, usage)
+        AccountBook.noteUsage(.codex, key: codex?.key, snap)
+        return HeaderAgentInfo(claudeUsage: headerUsage(usage, kind: .claude, key: claude?.key),
+                               codexUsage: headerUsage(snap, kind: .codex, key: codex?.key),
                                claudeAccount: claude,
                                codexAccount: codex,
                                claudeRemembered: !AccountBook.list(.claude).isEmpty,
@@ -4170,13 +4170,13 @@ class AppController: NSObject, NSApplicationDelegate {
     /// Nil out of here means "we have no figure for this account", which the card
     /// draws as "—". That is the honest answer for an address the app has never seen
     /// signed in, and it is better than a stranger's percentage.
-    private func headerUsage(_ raw: UsageSnapshot?, kind: AgentKind, email: String?) -> UsageSnapshot? {
+    private func headerUsage(_ raw: UsageSnapshot?, kind: AgentKind, key: String?) -> UsageSnapshot? {
         let switchedAt = AccountBook.lastSwitch(kind)
         // No switch this run, or the reading is newer than one: it describes whoever
         // is signed in now, which is the account on the card. The common path.
         if switchedAt == 0 || (raw?.updatedAt ?? 0) > switchedAt { return raw }
-        guard let email,
-              let u = AccountBook.list(kind).first(where: { $0.email == email })?.usage
+        guard let key,
+              let u = AccountBook.list(kind).first(where: { $0.key == key })?.usage
         else { return nil }
         let now = Date().timeIntervalSince1970
         var snap = UsageSnapshot()
@@ -4189,7 +4189,7 @@ class AppController: NSObject, NSApplicationDelegate {
         // own terms — it was asked about this account by name, which is exactly what
         // the two local sources cannot do. Same window the panel's rows use.
         snap.live = u.probed == true && now - u.readAt < AccountBook.probeFreshFor
-        snap.fetching = AccountBook.isProbing(kind, email: email)
+        snap.fetching = AccountBook.isProbing(kind, key: key)
         return snap
     }
 

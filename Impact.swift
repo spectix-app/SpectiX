@@ -132,6 +132,11 @@ enum ImpactRule {
     static let atDeskWindow = 120        // typed within 2 min of the banner = you were here
     static let chainGap = 90             // auto-jumps closer than this are one chain
     static let scoreMinArrivals = 10     // fewer arrivals than this → no 效能分, show 攒数据中
+    static let glanceMax = 60            // <60s on a working/await session = 扑空; longer = you worked there
+    static let needsFullSpeed = 15       // a needs banner answered this fast scores 100 …
+    static let needsZeroSpeed = 180      // … and this slow scores 0
+    static let doneFullSpeed = 60        // done banners: same curve, looser ends — the
+                                         // zero end is strandedAfter, where it becomes 被晾
     static let newUserBuckets = 4        // before this many tracked periods, show numbers not bars
 }
 
@@ -206,15 +211,15 @@ struct ControlDetail {
 // The headline 效能分 and its three factors (D2). Nil `value` = not enough arrivals yet.
 struct ImpactScore {
     let arrivals: Int            // sample size behind everything below
-    let effectiveRate: Double    // 0…1 — arrivals that landed on needs/done
+    let effectiveRate: Double    // 0…1 — effective ÷ (effective + glances at a busy session)
     let zeroMissRate: Double     // 0…1 — 1 − stranded/scored
-    let speedScore: Double       // 0…100 — log-mapped median response delay
+    let speedScore: Double       // 0…100 — mean per-banner score, at-desk banners only
     let medianDelaySec: Int
-
-    var enoughData: Bool { arrivals >= ImpactRule.scoreMinArrivals }
     // 「少扑空 N 次」: the arrivals that found a session actually waiting for you. Kept
     // as a count, not the rate — the sentence it feeds is about trips, not percentages.
-    var effectiveArrivals: Int { Int((Double(arrivals) * effectiveRate).rounded()) }
+    let effectiveArrivals: Int
+
+    var enoughData: Bool { arrivals >= ImpactRule.scoreMinArrivals }
     // 40/30/30 — a recommended split the user accepted; revisit once real data exists
     // (task 未决 3). 并行度 deliberately absent: it measures output, not attention, and
     // folding it in would reward opening 8 sessions and whiffing on all of them.
@@ -521,10 +526,12 @@ final class ImpactStore {
         var out: [Response] = []
         let visitTs = Set(visits(evs).map { "\($0.tty)|\($0.ts)" })
 
+        // `max`: an arrival that began before the banner means you were already sitting
+        // there when it fired — answered on the spot, not a negative delay.
         func close(_ tty: String, at ts: Int, via: ImpactKind?) {
             guard let n = open.removeValue(forKey: tty) else { return }
             out.append(Response(notifyTs: n.ts, tty: tty, status: n.status ?? "",
-                                idleAtNotify: n.idle ?? Int.max, respondTs: ts, via: via))
+                                idleAtNotify: n.idle ?? Int.max, respondTs: max(ts, n.ts), via: via))
         }
 
         for e in evs {
@@ -536,7 +543,8 @@ final class ImpactStore {
             } else if e.kind == .arrive, visitTs.contains("\(tty)|\(e.ts)") {
                 // A jump lands you in the terminal, so its arrival follows moments later
                 // and finds the debt already paid — the jump gets the credit, as it should.
-                close(tty, at: e.ts, via: nil)
+                // An arrive line is written when you LEAVE, so ts − dwell is when you got there.
+                close(tty, at: e.ts - (e.dwell ?? 0), via: nil)
             }
         }
         // Whatever is still open was never answered inside this bucket's slice of the log.
@@ -657,26 +665,40 @@ final class ImpactStore {
 
     private static func score(responses: [Response], visits: [Visit],
                               control: ControlDetail) -> ImpactScore {
-        // 有效到达 = you arrived on something that wanted you. Arrivals at a working
-        // session are the wasted trips this app exists to remove.
-        let effective = visits.filter { $0.status == "needs" || $0.status == "done" }.count
-        let effRate = visits.isEmpty ? 0 : Double(effective) / Double(visits.count)
+        // 有效到达 = you arrived on something that wanted you: needs/done, a done you had
+        // already read (seen) and came back to, or a session you had interrupted (paused).
+        // 扑空 = a short look at a session still running — the wasted trip this app exists
+        // to remove. A long stay on a running session is you working alongside it, not a
+        // trip, so it sits in neither pile.
+        let wanting: Set<String> = ["needs", "done", "seen", "paused"]
+        let effective = visits.filter { wanting.contains($0.status) }.count
+        let glances = visits.filter {
+            ($0.status == "working" || $0.status == "await") && $0.dwell < ImpactRule.glanceMax
+        }.count
+        let effRate = effective + glances == 0 ? 0 : Double(effective) / Double(effective + glances)
         let missRate = control.scored == 0 ? 1
             : 1 - Double(control.stranded) / Double(control.scored)
-        let delays = responses.compactMap { $0.delay }
-        let med = median(delays)
+        // Same at-desk rule as 遗漏: a banner that fired while you were away isn't yours to be slow on.
+        let answered = responses.filter { $0.atDesk && $0.delay != nil }
+        let speed = answered.isEmpty ? 100
+            : answered.map { speedScore($0.delay!, needs: $0.status == "needs") }
+                      .reduce(0, +) / Double(answered.count)
         return ImpactScore(arrivals: visits.count, effectiveRate: effRate,
-                           zeroMissRate: max(0, missRate), speedScore: speedScore(med),
-                           medianDelaySec: med)
+                           zeroMissRate: max(0, missRate), speedScore: speed,
+                           medianDelaySec: median(answered.map { $0.delay! }),
+                           effectiveArrivals: effective)
     }
 
-    // ≤15s → 100, ≥180s → 0, logarithmic in between: 15→30s is a far bigger regression
-    // than 150→165s, and a linear map would call them equal.
-    private static func speedScore(_ sec: Int) -> Double {
-        guard sec > 0 else { return 0 }          // no measured delays = nothing to score
-        if sec <= 15 { return 100 }
-        if sec >= 180 { return 0 }
-        return 100 * (1 - log(Double(sec) / 15) / log(12))
+    // Full marks up to `full`, zero from `zero`, logarithmic in between: 15→30s is a far
+    // bigger regression than 150→165s. needs blocks the session, so it gets 15s→180s;
+    // done only asks for the next instruction, so 60s→10min (where it turns 被晾).
+    private static func speedScore(_ sec: Int, needs: Bool) -> Double {
+        let full = Double(needs ? ImpactRule.needsFullSpeed : ImpactRule.doneFullSpeed)
+        let zero = Double(needs ? ImpactRule.needsZeroSpeed : ImpactRule.strandedAfter)
+        let s = Double(sec)
+        if s <= full { return 100 }
+        if s >= zero { return 0 }
+        return 100 * (1 - log(s / full) / log(zero / full))
     }
 
     // MARK: 连续 (from the usage log, not this one)

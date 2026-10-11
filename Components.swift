@@ -4328,16 +4328,21 @@ final class AccountPanel: NSView {
         ])
         rebuild()
         applyChrome()
+        // A sign-in typed into a terminal while the panel is open.
+        NotificationCenter.default.addObserver(self, selector: #selector(accountChanged),
+                                               name: AccountBook.currentDidChange, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func accountChanged() { rebuild() }
 
     /// A click on a remembered address. The stored copy goes back as the live
     /// credential and the panel redraws with the tick moved — that redraw IS the
     /// confirmation. No copy (or a rejected one): the CLI's own login, in Terminal,
     /// with the address pre-filled.
     private func pick(_ entry: RememberedAccount) {
-        if Demo.enabled { Demo.pick(kind, email: entry.email); rebuild(); return }
-        if AccountBook.switchTo(kind, email: entry.email) {
+        if Demo.enabled { Demo.pick(kind, email: entry.key); rebuild(); return }
+        if AccountBook.switchTo(kind, key: entry.key) {
             rebuild()
             // ★ Ask the server for the account we just switched TO (2026-09-09, user's
             // call). Everything else that knows this account's quota is now stale by
@@ -4365,7 +4370,7 @@ final class AccountPanel: NSView {
         probeMissed = 0
         rebuild()                                  // the button starts spinning
         for a in accounts {
-            AccountBook.probeUsage(kind, email: a.email) { [weak self] ok in
+            AccountBook.probeUsage(kind, key: a.key) { [weak self] ok in
                 guard let self else { return }
                 if !ok { self.probeMissed += 1 }
                 self.probing -= 1
@@ -4420,7 +4425,7 @@ final class AccountPanel: NSView {
         // Claude, with at least one address that is not signed in but has a stored
         // copy to ask with. Sits between the title and the count.
         let askable = Demo.enabled ? [] : book.filter {
-            $0.email != current?.email && CredentialVault.has(kind, email: $0.email)
+            $0.key != current?.key && AccountBook.canSwitch(kind, $0)
         }
         if kind == .claude, !askable.isEmpty {
             let refresh = RefreshQuotaButton(missed: probeMissed, busy: probing > 0) { [weak self] in
@@ -4449,8 +4454,10 @@ final class AccountPanel: NSView {
                 sep.heightAnchor.constraint(equalToConstant: 1).isActive = true
                 rows.append(sep)
             }
-            let isCurrent = entry.email == current?.email
+            let isCurrent = entry.key == current?.key
+            let shared = book.filter { $0.email == entry.email }.count > 1
             rows.append(AccountRow(kind: kind, entry: entry, isCurrent: isCurrent, accent: accent,
+                                   showOrg: shared,
                                    onPick: { [weak self] in self?.pick(entry) },
                                    onForgot: { [weak self] in self?.rebuild() }))
         }
@@ -4467,6 +4474,7 @@ final class AccountPanel: NSView {
             // which would otherwise run inside event dispatch with that click's event
             // still in flight.
             let cmd = AccountBook.addCommand(self.kind)
+            AccountBook.prepareLogin(self.kind)
             DispatchQueue.main.async { self.onRun?(cmd) }
         })
         // The footnote gets the same 6pt inset the rows keep, so the panel has ONE
@@ -4549,6 +4557,7 @@ private final class AccountRow: NSView {
     private var command: String { AccountBook.switchCommand(kind, email: entry.email) }
 
     init(kind: AgentKind, entry: RememberedAccount, isCurrent: Bool, accent: NSColor,
+         showOrg: Bool = false,
          onPick: @escaping () -> Void,
          onForgot: @escaping () -> Void) {
         self.kind = kind
@@ -4566,7 +4575,9 @@ private final class AccountRow: NSView {
         // No tick any more. The signed-in account is the GREEN one — a colour the eye
         // catches in the same glance that reads the address, where a glyph in a
         // reserved gutter charged every row 16pt of indent to say the same thing once.
-        let primary = NSTextField(labelWithString: entry.email)
+        // Two orgs under one address: name the org, or the rows read as duplicates.
+        let org = showOrg ? entry.orgLabel : nil
+        let primary = NSTextField(labelWithString: org.map { "\(entry.email) · \($0)" } ?? entry.email)
         primary.font = isCurrent ? .systemFont(ofSize: 11.5, weight: .semibold)
                                  : .systemFont(ofSize: 11.5)
         primary.textColor = isCurrent ? Status.usageGreen : .labelColor
@@ -4614,7 +4625,7 @@ private final class AccountRow: NSView {
         // Same shape as the header's own gauges — icon, figure, bar, countdown — on
         // purpose. It is the same fact at two zoom levels, and someone who has learnt
         // to read one shouldn't have to learn a second grammar for the other.
-        let stored = isCurrent || Demo.enabled || CredentialVault.has(kind, email: entry.email)
+        let stored = isCurrent || Demo.enabled || AccountBook.canSwitch(kind, entry)
         let now = Date().timeIntervalSince1970
         let u = entry.usage
         // "Current" alone is not enough to call a figure live: right after a switch
@@ -4769,7 +4780,7 @@ private final class AccountRow: NSView {
     }
 
     @objc private func forget() {
-        if Demo.enabled { Demo.forget(kind, email: entry.email) } else { AccountBook.forget(kind, email: entry.email) }
+        if Demo.enabled { Demo.forget(kind, email: entry.key) } else { AccountBook.forget(kind, key: entry.key) }
         onForgot()
     }
 }

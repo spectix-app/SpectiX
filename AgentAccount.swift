@@ -38,6 +38,13 @@ struct AgentAccount {
     var plan: String?          // short label, see planLabel below
     var organization: String?
     var accountID: String?
+    /// Claude only. One address can belong to several organizations (a personal plan
+    /// and a company Team), each its own sign-in with its own quota.
+    var orgID: String? = nil
+
+    /// What tells two sign-ins apart: the address, plus the organization when the
+    /// CLI names one.
+    var key: String? { email.map { AccountBook.key(email: $0, orgID: orgID) } }
 
     var isEmpty: Bool {
         email == nil && displayName == nil && plan == nil
@@ -65,7 +72,8 @@ enum AgentAccounts {
                 // here; a caller showing both should drop the one that just echoes
                 // the address.
                 organization: nonEmpty(a.organizationName),
-                accountID: nonEmpty(a.accountUuid))
+                accountID: nonEmpty(a.accountUuid),
+                orgID: nonEmpty(a.organizationUuid))
             return .ok(acc.isEmpty ? nil : acc)
         }
     }
@@ -245,6 +253,7 @@ private struct ClaudeConfig: Decodable {
         let organizationType: String?           // e.g. "claude_max"
         let organizationRateLimitTier: String?  // e.g. "default_claude_max_20x"
         let accountUuid: String?
+        let organizationUuid: String?
     }
     let oauthAccount: OAuthAccount?
 }

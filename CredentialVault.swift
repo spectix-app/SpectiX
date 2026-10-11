@@ -61,22 +61,22 @@ enum CredentialVault {
     /// answer, so the three places that do keep it honest.
     private static var presence: [String: Bool] = [:]
 
-    static func has(_ kind: AgentKind, email: String) -> Bool {
+    static func has(_ kind: AgentKind, key: String) -> Bool {
         retireFrameworkItems()
-        let key = acct(kind, email: email)
-        if let known = presence[key] { return known }
+        let item = acct(kind, key: key)
+        if let known = presence[item] { return known }
         // Attributes only, no `-w`: asking whether a copy EXISTS must never be a
         // request to decrypt one.
         let ok = run(["/usr/bin/security", "find-generic-password",
-                      "-a", key, "-s", service]).status == 0
-        presence[key] = ok
+                      "-a", item, "-s", service]).status == 0
+        presence[item] = ok
         return ok
     }
 
-    /// Copy the CLI's current credential into the vault under `email`. False when
+    /// Copy the CLI's current credential into the vault under `key` (RememberedAccount.vault). False when
     /// there is nothing to copy (signed out) or the Keychain refused.
     @discardableResult
-    static func capture(_ kind: AgentKind, email: String) -> Bool {
+    static func capture(_ kind: AgentKind, key: String) -> Bool {
         guard let blob = live(kind), !blob.isEmpty else { return false }
         // ★ The label must match the token. The caller's idea of "who is signed in"
         // comes from a cached parse that survives an unreadable file, so it can be a
@@ -84,8 +84,8 @@ enum CredentialVault {
         // the wrong name, a copy makes every later switch to that name silently land
         // on the OTHER account — measured 2026-09-04: the "work" label held the personal account's token.
         // Codex carries its address inside the blob; when they disagree, store nothing.
-        if let inside = codexEmail(in: blob), inside.lowercased() != email.lowercased() { return false }
-        return store(kind, email: email, blob: blob)
+        if let inside = codexEmail(in: blob), inside.lowercased() != key.lowercased() { return false }
+        return store(kind, key: key, blob: blob)
     }
 
     /// The address a Codex credential is FOR, read off its id_token. nil for Claude's
@@ -105,10 +105,10 @@ enum CredentialVault {
         return claims["email"] as? String
     }
 
-    /// Put the stored credential for `email` back as the CLI's live one. False when
+    /// Put the stored credential under `key` back as the CLI's live one. False when
     /// no copy exists or the write failed — the caller then runs the CLI's login.
-    static func restore(_ kind: AgentKind, email: String) -> Bool {
-        guard let blob = stash(kind, email: email) else { return false }
+    static func restore(_ kind: AgentKind, key: String) -> Bool {
+        guard let blob = stash(kind, key: key) else { return false }
         switch kind {
         case .claude:
             guard let s = String(data: blob, encoding: .utf8) else { return false }
@@ -123,11 +123,11 @@ enum CredentialVault {
         }
     }
 
-    static func forget(_ kind: AgentKind, email: String) {
+    static func forget(_ kind: AgentKind, key: String) {
         retireFrameworkItems()
-        let key = acct(kind, email: email)
-        run(["/usr/bin/security", "delete-generic-password", "-a", key, "-s", service])
-        presence[key] = false
+        let item = acct(kind, key: key)
+        run(["/usr/bin/security", "delete-generic-password", "-a", item, "-s", service])
+        presence[item] = false
     }
 
     // MARK: live credential
@@ -167,12 +167,12 @@ enum CredentialVault {
     // MARK: live quota of a stored account
 
     /// The body Anthropic's usage endpoint returns for the account whose copy is
-    /// stored under `email` — nil when there is no copy, it holds no usable access
+    /// stored under `key` — nil when there is no copy, it holds no usable access
     /// token, the token has expired (an expired one cannot be renewed here; see the
     /// header), or the request failed. Blocking: run it off the main thread.
     /// Claude only; Codex's quota has no endpoint this app knows of.
-    static func usageResponse(_ kind: AgentKind, email: String) -> Data? {
-        guard kind == .claude, let blob = stash(kind, email: email),
+    static func usageResponse(_ kind: AgentKind, key: String) -> Data? {
+        guard kind == .claude, let blob = stash(kind, key: key),
               let root = try? JSONSerialization.jsonObject(with: blob) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty,
@@ -199,22 +199,22 @@ enum CredentialVault {
 
     // MARK: vault items
 
-    private static func acct(_ kind: AgentKind, email: String) -> String {
-        "\(kind.rawValue):\(email)"
+    private static func acct(_ kind: AgentKind, key: String) -> String {
+        "\(kind.rawValue):\(key)"
     }
 
-    private static func stash(_ kind: AgentKind, email: String) -> Data? {
+    private static func stash(_ kind: AgentKind, key: String) -> Data? {
         retireFrameworkItems()
         let r = run(["/usr/bin/security", "find-generic-password",
-                     "-a", acct(kind, email: email), "-s", service, "-w"])
+                     "-a", acct(kind, key: key), "-s", service, "-w"])
         guard r.status == 0 else { return nil }
         return plain(r.stdout)
     }
 
-    private static func store(_ kind: AgentKind, email: String, blob: Data) -> Bool {
+    private static func store(_ kind: AgentKind, key: String, blob: Data) -> Bool {
         retireFrameworkItems()
         guard let s = String(data: blob, encoding: .utf8) else { return false }
-        let a = acct(kind, email: email)
+        let a = acct(kind, key: key)
         // Replace rather than update: an item carries the access list it was BORN
         // with, so overwriting one made by an earlier build would inherit that
         // build's signature and prompt all over again.

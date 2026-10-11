@@ -30,17 +30,20 @@ import Cocoa
 
 final class ImpactPanel: NSView {
 
+    // 效能 (score + curves, foldable) and 成绩 (bars, always visible).
+    private let effBlock = SectionBlock(accent: Metric.accent(.saved), bed: true, inset: 0)
+    private let barsBlock = SectionBlock(accent: Metric.accent(.focus))
     private let fold = FoldBar()
-    private let body = NSView()
     // One surface, two halves. hero and rate used to be separate NeonSurfaces stacked
     // with a gap; they are the same subject read at two zoom levels, so they now share
     // a card and are parted by a hairline instead of by air.
-    private let card = PanelCard()
+    private let card = NSView()
     private let divider = NeonDivider()
     private let hero = HeroCard()
     private let rate = RateCard()
-    private let barsTitle = NSTextField(labelWithString: "")
     private var bars: [(metric: Metric, row: MetricRow)] = []
+    private let inputTitle = NSTextField(labelWithString: L("你投入的 · 不算纪录",
+                                                           "What you put in · no records"))
     private let hint = NSTextField(labelWithString: L("点任意一行看它是什么意思",
                                                       "Tap any row to see what it means"))
     private let detail = DetailCard()
@@ -48,7 +51,7 @@ final class ImpactPanel: NSView {
     private var expanded = false
     private var selected: Metric?
     private var foldBottom: NSLayoutConstraint!
-    private var bodyBottom: NSLayoutConstraint!
+    private var cardBottom: NSLayoutConstraint!
     private var hintHeight: NSLayoutConstraint!
     private var detailHeight: NSLayoutConstraint!
 
@@ -56,8 +59,10 @@ final class ImpactPanel: NSView {
     private var period: PeriodImpact?
 
     // D5's stagger measured from one clock, so the bars, their figures and the curve
-    // keep their designed offsets however long an individual frame takes.
-    private let clock = IntroClock(span: 1.2)
+    // keep their designed offsets however long an individual frame takes. The bars are
+    // always on screen, so they replay on a range switch; the curves replay on expand.
+    private let barsClock = IntroClock(span: 1.2)
+    private let curveClock = IntroClock(span: 1.2)
 
     init() {
         super.init(frame: .zero)
@@ -70,18 +75,22 @@ final class ImpactPanel: NSView {
     // MARK: Build
 
     private func buildUI() {
+        for b in [effBlock, barsBlock] {
+            b.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(b)
+        }
+        effBlock.set(title: L("效能", "Impact"))
+        effBlock.onToggle = { [weak self] in self?.toggle() }
+        let eff = effBlock.content
+
         fold.translatesAutoresizingMaskIntoConstraints = false
         fold.onClick = { [weak self] in self?.toggle() }
-        addSubview(fold)
-
-        body.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(body)
+        eff.addSubview(fold)
 
         card.translatesAutoresizingMaskIntoConstraints = false
-        body.addSubview(card)
+        eff.addSubview(card)
 
         hero.translatesAutoresizingMaskIntoConstraints = false
-        hero.onCollapse = { [weak self] in self?.toggle() }
         card.addSubview(hero)
 
         divider.translatesAutoresizingMaskIntoConstraints = false
@@ -90,31 +99,33 @@ final class ImpactPanel: NSView {
         rate.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(rate)
 
-        // 「本周 · 条长 = 占你的个人最佳」 — the bars mean nothing without their divisor
-        // (the period noun tracks the range switch; see barsCaption)
-        // stated, and the divisor is the point: it is YOUR record, not a target we set.
-        // Filled in by update(), which knows whether there is a divisor at all yet.
-        // It must yield before anything else does: it is one long unbroken line, and at
-        // full compression resistance it becomes the panel's horizontal floor — in
-        // English that floor is wider than a narrow stats window.
-        barsTitle.lineBreakMode = .byTruncatingTail
-        barsTitle.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
-        barsTitle.translatesAutoresizingMaskIntoConstraints = false
-        body.addSubview(barsTitle)
-
-        // Fixed order 省时 · 专注 · 连续 · 托管 · 掌控 (2.4) — it is Metric's declaration
-        // order, so the list can never drift out of step with the palette.
+        let list = barsBlock.content
+        // Fixed order 省时 · 专注 · 连续 · 托管 · 掌控 · 工作 · 消耗 (2.4) — it is Metric's
+        // declaration order, so the list can never drift out of step with the palette.
+        inputTitle.font = Theme.font(10, .regular)
+        inputTitle.textColor = .tertiaryLabelColor
+        inputTitle.translatesAutoresizingMaskIntoConstraints = false
+        list.addSubview(inputTitle)
         var prev: NSView?
         for m in Metric.allCases {
             let row = MetricRow(metric: m)
             row.translatesAutoresizingMaskIntoConstraints = false
             row.onClick = { [weak self] in self?.select(m) }
-            body.addSubview(row)
+            list.addSubview(row)
+            // 工作 / 消耗 measure you, not the app, so they sit under their own subhead.
+            let afterInput = m == .work
+            if afterInput {
+                NSLayoutConstraint.activate([
+                    inputTitle.leadingAnchor.constraint(equalTo: list.leadingAnchor, constant: 2),
+                    inputTitle.topAnchor.constraint(equalTo: prev!.bottomAnchor, constant: 6),
+                ])
+            }
             NSLayoutConstraint.activate([
-                row.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-                row.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-                row.topAnchor.constraint(equalTo: prev?.bottomAnchor ?? barsTitle.bottomAnchor,
-                                         constant: prev == nil ? 6 : 0),
+                row.leadingAnchor.constraint(equalTo: list.leadingAnchor),
+                row.trailingAnchor.constraint(equalTo: list.trailingAnchor),
+                row.topAnchor.constraint(equalTo: afterInput ? inputTitle.bottomAnchor
+                                                             : prev?.bottomAnchor ?? list.topAnchor,
+                                         constant: afterInput ? 2 : 0),
             ])
             bars.append((m, row))
             prev = row
@@ -126,45 +137,35 @@ final class ImpactPanel: NSView {
         hint.textColor = .tertiaryLabelColor
         hint.alignment = .center
         hint.translatesAutoresizingMaskIntoConstraints = false
-        body.addSubview(hint)
+        list.addSubview(hint)
 
         detail.translatesAutoresizingMaskIntoConstraints = false
         detail.alphaValue = 0
         detail.onHeightChange = { [weak self] _ in self?.syncSelection(animated: false) }
-        body.addSubview(detail)
+        list.addSubview(detail)
 
         hintHeight = hint.heightAnchor.constraint(equalToConstant: Self.hintH)
         detailHeight = detail.heightAnchor.constraint(equalToConstant: 0)
+        foldBottom = fold.bottomAnchor.constraint(equalTo: eff.bottomAnchor)
+        cardBottom = card.bottomAnchor.constraint(equalTo: eff.bottomAnchor)
 
         NSLayoutConstraint.activate([
-            hint.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            hint.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-            hint.topAnchor.constraint(equalTo: prev!.bottomAnchor, constant: 7),
-            hintHeight,
+            effBlock.topAnchor.constraint(equalTo: topAnchor),
+            effBlock.leadingAnchor.constraint(equalTo: leadingAnchor),
+            effBlock.trailingAnchor.constraint(equalTo: trailingAnchor),
+            barsBlock.topAnchor.constraint(equalTo: effBlock.bottomAnchor, constant: Self.blockGap),
+            barsBlock.leadingAnchor.constraint(equalTo: leadingAnchor),
+            barsBlock.trailingAnchor.constraint(equalTo: trailingAnchor),
+            barsBlock.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            detail.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            detail.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-            detail.topAnchor.constraint(equalTo: hint.bottomAnchor),
-            detailHeight,
-        ])
-        prev = detail
-
-        foldBottom = fold.bottomAnchor.constraint(equalTo: bottomAnchor)
-        bodyBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
-
-        NSLayoutConstraint.activate([
-            fold.topAnchor.constraint(equalTo: topAnchor),
-            fold.leadingAnchor.constraint(equalTo: leadingAnchor),
-            fold.trailingAnchor.constraint(equalTo: trailingAnchor),
+            fold.topAnchor.constraint(equalTo: eff.topAnchor),
+            fold.leadingAnchor.constraint(equalTo: eff.leadingAnchor),
+            fold.trailingAnchor.constraint(equalTo: eff.trailingAnchor),
             fold.heightAnchor.constraint(equalToConstant: 62),
 
-            body.topAnchor.constraint(equalTo: topAnchor),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            card.topAnchor.constraint(equalTo: body.topAnchor),
-            card.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            card.topAnchor.constraint(equalTo: eff.topAnchor),
+            card.leadingAnchor.constraint(equalTo: eff.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: eff.trailingAnchor),
 
             hero.topAnchor.constraint(equalTo: card.topAnchor),
             hero.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -182,11 +183,16 @@ final class ImpactPanel: NSView {
             rate.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             rate.bottomAnchor.constraint(equalTo: card.bottomAnchor),
 
-            barsTitle.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: 2),
-            barsTitle.trailingAnchor.constraint(lessThanOrEqualTo: body.trailingAnchor),
-            barsTitle.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 12),
+            hint.leadingAnchor.constraint(equalTo: list.leadingAnchor),
+            hint.trailingAnchor.constraint(equalTo: list.trailingAnchor),
+            hint.topAnchor.constraint(equalTo: prev!.bottomAnchor, constant: 7),
+            hintHeight,
 
-            prev!.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            detail.leadingAnchor.constraint(equalTo: list.leadingAnchor),
+            detail.trailingAnchor.constraint(equalTo: list.trailingAnchor),
+            detail.topAnchor.constraint(equalTo: hint.bottomAnchor),
+            detailHeight,
+            detail.bottomAnchor.constraint(equalTo: list.bottomAnchor),
         ])
 
         // D5's timings, all measured from the moment the panel opens:
@@ -194,12 +200,15 @@ final class ImpactPanel: NSView {
         //   0.10s  the bars grow from the left, 60ms apart
         //   0.20s  the curve draws in
         //   0.34s  each figure surfaces once its bar has passed under it
-        clock.onTick = { [weak self] t in
+        barsClock.onTick = { [weak self] t in
             guard let self else { return }
             for (i, b) in self.bars.enumerated() {
                 b.row.setIntro(grow: IntroClock.phase(t, delay: 0.10 + 0.06 * Double(i), dur: 0.62),
                                fade: IntroClock.phase(t, delay: 0.34 + 0.06 * Double(i), dur: 0.40))
             }
+        }
+        curveClock.onTick = { [weak self] t in
+            guard let self else { return }
             self.hero.setIntro(curve: IntroClock.phase(t, delay: 0.20, dur: 1.0))
             self.rate.setIntro(curve: IntroClock.phase(t, delay: 0.28, dur: 1.0))
         }
@@ -208,13 +217,20 @@ final class ImpactPanel: NSView {
     // MARK: Data
 
     func update(_ w: PeriodImpact, trend pts: [TrendPoint], rate rp: [RatePoint]) {
+        let rangeChanged = period?.range != w.range
         period = w
         detail.lastPeriod = w
-        barsTitle.attributedStringValue = Self.barsCaption(w)
+        effBlock.set(purpose: Self.effPurpose(w.range))
+        effBlock.set(summary: w.score.value.map(String.init) ?? "", tail: ImpactFormat.band(w.score.value))
+        barsBlock.set(title: L("\(w.range.impactNoun)成绩", "\(w.range.impactNoun) scorecard"))
+        barsBlock.set(purpose: Self.barsPurpose(w))
+        let s = Self.barsSummary(w)
+        barsBlock.set(summary: s.value, tail: s.tail)
         fold.update(w, trend: pts)
         hero.update(w, trend: pts)
         rate.update(rp, range: w.range)
         for (m, row) in bars { row.update(w.metric(m), period: w) }
+        if rangeChanged { window != nil ? barsClock.run() : barsClock.settle() }
         if let s = selected {
             detail.show(s, period: w)
             syncSelection(animated: false)
@@ -223,39 +239,40 @@ final class ImpactPanel: NSView {
 
     // MARK: Expand / collapse
     //
-    // Either the bar OR the body — expanded, the bar disappears entirely rather than
-    // sitting above the hero, because everything on it is repeated inside (D4).
+    // Inside the 效能 block, either the bar OR the card — expanded, the bar disappears
+    // entirely rather than sitting above the hero, because everything on it is repeated
+    // inside (D4). The bars block underneath is not part of the fold.
 
     private func toggle() { setExpanded(!expanded) }
 
     func setExpanded(_ on: Bool, animated: Bool = true) {
         expanded = on
-        if !on { selected = nil; syncSelection(animated: false) }
+        effBlock.setFolded(!on)
 
         // Neither half may be `isHidden` while it moves — a hidden view cannot fade. The
         // one that ends up invisible is hidden again on completion instead, otherwise its
         // transparent self keeps swallowing clicks meant for the other.
         fold.isHidden = false
-        body.isHidden = false
+        card.isHidden = false
 
         let apply = {
             self.foldBottom.isActive = !on
-            self.bodyBottom.isActive = on
+            self.cardBottom.isActive = on
             self.fold.alphaValue = on ? 0 : 1
-            self.body.alphaValue = on ? 1 : 0
+            self.card.alphaValue = on ? 1 : 0
         }
         let settle = {
             self.fold.isHidden = on
-            self.body.isHidden = !on
+            self.card.isHidden = !on
         }
 
-        guard animated else { apply(); settle(); on ? clock.settle() : clock.stop(); return }
+        guard animated else { apply(); settle(); on ? curveClock.settle() : curveClock.stop(); return }
 
         // 260–380ms (D5): below that the sections underneath read as jumping rather
         // than moving. The whole chain animates, not just us — the panel lives in the
         // stats page's document view and everything under it slides with it.
         animate(0.30) { apply() } done: { settle() }
-        if on { hero.playRingIntro(); clock.run() } else { clock.stop() }
+        if on { hero.playRingIntro(); curveClock.run() } else { curveClock.stop() }
     }
 
     // MARK: Detail (3.1)
@@ -300,27 +317,41 @@ final class ImpactPanel: NSView {
 
     private static let hintH: CGFloat = 22
 
-    /// Before four tracked periods there is no divisor, so the caption says what the
+    private static let blockGap: CGFloat = 12
+
+    private static func effPurpose(_ r: TimeRange) -> String {
+        switch r {
+        case .today: return L("今天 SpectiX 有没有帮上忙", "Did SpectiX help today")
+        case .week:  return L("这周 SpectiX 有没有帮上忙", "Did SpectiX help this week")
+        case .month: return L("这个月 SpectiX 有没有帮上忙", "Did SpectiX help this month")
+        case .all:   return L("SpectiX 一直以来帮上忙没有", "Has SpectiX been helping")
+        }
+    }
+
+    /// Before four tracked periods there is no divisor, so the purpose line says what the
     /// numbers ARE instead of what the (absent) bars mean — and says it once, rather
     /// than repeating 「还需 N 周才有纪录」 down all five rows (D6 新用户).
-    private static func barsCaption(_ w: PeriodImpact) -> NSAttributedString {
-        let out = NSMutableAttributedString(string: w.range.impactNoun, attributes: [
-            .font: Theme.font(12, .semibold), .foregroundColor: NSColor.labelColor])
-        let tail: String
+    private static func barsPurpose(_ w: PeriodImpact) -> String {
         if !w.comparable {
-            tail = L("　全部区间没有上一期，只看总量",
-                     "  all-time has no prior period — totals only")
+            return L("全部区间没有上一期，只看总量", "All-time has no prior period — totals only")
         } else if w.bucketsTracked < ImpactRule.newUserBuckets {
             let need = ImpactRule.newUserBuckets - w.bucketsTracked
-            tail = L("　还需 \(need) \(w.range.bucketNoun)才有纪录可比，先看数字",
-                     "  \(need) more \(w.range.bucketNoun) before there is a record to compare against")
-        } else {
-            tail = L("　条长 = 占你的个人最佳", "  bar = share of your personal best")
+            return L("还需 \(need) \(w.range.bucketNoun)才有纪录可比，先看数字",
+                     "\(need) more \(w.range.bucketNoun) before there is a record to compare against")
         }
-        out.append(NSAttributedString(string: tail,
-            attributes: [.font: Theme.font(10.5, .regular),
-                         .foregroundColor: NSColor.secondaryLabelColor]))
-        return out
+        return L("每一项和你自己的最佳比", "Each one against your own best")
+    }
+
+    /// Records first; failing that, how many of the five are within reach of one.
+    private static func barsSummary(_ w: PeriodImpact) -> (value: String, tail: String) {
+        guard w.comparable, w.bucketsTracked >= ImpactRule.newUserBuckets else { return ("", "") }
+        if w.records > 0 { return (L("\(w.records) 项", "\(w.records)"), L("破纪录", "records")) }
+        let near = Metric.allCases.filter {
+            let v = w.metric($0)
+            return $0 != .work && $0 != .tokens && v.priorBest > 0
+                && Double(v.value) >= 0.8 * Double(v.priorBest)
+        }.count
+        return near > 0 ? (L("\(near) 项", "\(near)"), L("接近最佳", "near best")) : ("", "")
     }
 }
 
@@ -371,18 +402,16 @@ private final class IntroClock {
 // 62pt, and it has to answer 「这一段怎么样」 on its own — score, trend vs the period
 // before it, records broken, the curve's shape, and the headline hour figure.
 
-private final class FoldBar: NeonSurface {
+private final class FoldBar: NSView {
 
     var onClick: (() -> Void)?
 
     private let ring = NeonRing(lineWidth: 3.6, glow: 4, numberSize: 13, caption: nil)
     private let title = NSTextField(labelWithString: "")
-    private let band = TagPill()
     private let sub = NSTextField(labelWithString: "")
     private let spark = SparkLine()
     private let tailValue = NSTextField(labelWithString: "—")
     private let tailCaption = NSTextField(labelWithString: L("省下的等待", "Waiting saved"))
-    private let tri = TriangleButton(pointsUp: false)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -408,9 +437,7 @@ private final class FoldBar: NeonSurface {
             v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
 
-        tri.onClick = { [weak self] in self?.onClick?() }
-
-        for v in [ring, title, band, sub, spark, tailValue, tailCaption, tri] as [NSView] {
+        for v in [ring, title, sub, spark, tailValue, tailCaption] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -423,32 +450,27 @@ private final class FoldBar: NeonSurface {
 
             title.leadingAnchor.constraint(equalTo: ring.trailingAnchor, constant: 12),
             title.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
-            band.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 6),
-            band.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             sub.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             sub.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
 
-            spark.leadingAnchor.constraint(greaterThanOrEqualTo: band.trailingAnchor, constant: 12),
+            spark.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 12),
             spark.leadingAnchor.constraint(greaterThanOrEqualTo: sub.trailingAnchor, constant: 12),
             spark.trailingAnchor.constraint(equalTo: tailValue.leadingAnchor, constant: -12),
             spark.centerYAnchor.constraint(equalTo: centerYAnchor),
             spark.widthAnchor.constraint(equalToConstant: 76),
             spark.heightAnchor.constraint(equalToConstant: 22),
 
-            tailValue.trailingAnchor.constraint(equalTo: tri.leadingAnchor, constant: -12),
+            tailValue.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             tailValue.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 2),
             tailCaption.trailingAnchor.constraint(equalTo: tailValue.trailingAnchor),
             tailCaption.topAnchor.constraint(equalTo: tailValue.bottomAnchor, constant: 4),
 
-            tri.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -13),
-            tri.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     func update(_ w: PeriodImpact, trend pts: [TrendPoint]) {
         title.stringValue = w.range.impactTitle
         ring.set(score: w.score.value)
-        band.set(text: ImpactFormat.band(w.score.value), color: Metric.accent(.saved))
         sub.attributedStringValue = ImpactFormat.foldSubline(w)
         // The spark shows whichever series the hero's curve settled on, so the two can
         // never be reporting different things about the same period.
@@ -470,30 +492,12 @@ private final class FoldBar: NeonSurface {
 
     // The whole bar is the affordance, not just the triangle (D4).
     override func mouseDown(with event: NSEvent) { onClick?() }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.filter { $0.owner === self }.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
 }
 
 // MARK: - Hero (2.3)
 
-// The single surface hero and rate are drawn on.
-//
-// It deliberately does NOT track the pointer. A surface that brightens under the cursor
-// is promising a click, and this one stopped accepting clicks when collapsing moved to
-// the ▲ alone (so the charts could be hovered for readings without folding the panel).
-// It therefore sits permanently at NeonSurface's resting wash — which is exactly the
-// brightness the hover state used to have.
-private final class PanelCard: NeonSurface {}
 
 private final class HeroCard: NSView {
-
-    var onCollapse: (() -> Void)?
 
     private let ring = NeonRing(lineWidth: 8, glow: 6, numberSize: 26, caption: "")
     private let headline = NSTextField(labelWithString: "")
@@ -503,7 +507,6 @@ private final class HeroCard: NSView {
         "这一段还没有足够的数据画出趋势", "Not enough data in this range to draw a trend"))
     private let legend = NSTextField(labelWithString: "")
     private let peakNote = NSTextField(labelWithString: "")
-    private let tri = TriangleButton(pointsUp: true)
     private lazy var chartHeight = chart.heightAnchor.constraint(equalToConstant: 92)
 
     override init(frame: NSRect) {
@@ -532,24 +535,19 @@ private final class HeroCard: NSView {
         emptyChart.textColor = NeonInk.faint
         emptyChart.alignment = .center
 
-        tri.onClick = { [weak self] in self?.onCollapse?() }
-
-        for v in [ring, headline, detail, chart, emptyChart, legend, peakNote, tri] as [NSView] {
+        for v in [ring, headline, detail, chart, emptyChart, legend, peakNote] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
 
         NSLayoutConstraint.activate([
-            tri.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            tri.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-
             ring.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             ring.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             ring.widthAnchor.constraint(equalToConstant: 92),
             ring.heightAnchor.constraint(equalToConstant: 92),
 
             headline.leadingAnchor.constraint(equalTo: ring.trailingAnchor, constant: 14),
-            headline.trailingAnchor.constraint(lessThanOrEqualTo: tri.leadingAnchor, constant: -10),
+            headline.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
             headline.topAnchor.constraint(equalTo: ring.topAnchor, constant: 14),
             detail.leadingAnchor.constraint(equalTo: headline.leadingAnchor),
             detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
@@ -592,12 +590,10 @@ private final class HeroCard: NSView {
         peakNote.stringValue = ImpactFormat.trendNote(pts, w.range)
     }
 
-    // Collapsing is the ▲ button's job ALONE. Click-anywhere used to be the gesture
+    // Collapsing is the block header's ▲ ALONE. Click-anywhere used to be the gesture
     // (D4), and it was right while the card was inert — but the charts read out values
     // under the pointer now, so anywhere you would hover to read a number is somewhere
     // a stray click would have folded the panel away underneath you.
-    // Hover styling belongs to the enclosing PanelCard: the two halves share one
-    // surface, so lighting up only the half under the pointer would split it back in two.
 
     func setIntro(curve: CGFloat) { chart.drawProgress = curve }
 
@@ -1690,44 +1686,131 @@ private final class TrendChart: NSView {
 
 // MARK: - Shared chrome
 
-// The two containers share one material: a faint 省时绿→专注蓝 wash inside a green
-// hairline. Painted in draw() rather than baked into layers so a light/dark flip
-// re-resolves it for free.
-private class NeonSurface: NSView {
+// MARK: - Section block
+// Tinted card: header band (title + purpose + optional summary pill / fold ▲) over caller-filled content.
+final class SectionBlock: NSView {
 
-    var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
-    var radius: CGFloat = 12
+    let content = NSView()
+    var onToggle: (() -> Void)? { didSet { tri.isHidden = onToggle == nil } }
+
+    private let accent: NSColor
+    private let bed: Bool
+    private let title = NSTextField(labelWithString: "")
+    private let purpose = NSTextField(labelWithString: "")
+    private let summary = TagPill(size: 10.5, height: 18)
+    private let tri = TriangleButton(pointsUp: true)
+    private static let headerH: CGFloat = 34
+    private static let radius: CGFloat = 12
+
+    init(accent: NSColor, bed: Bool = false, inset: CGFloat = 12) {
+        self.accent = accent
+        self.bed = bed
+        super.init(frame: .zero)
+        title.font = Theme.rounded(12.5, .bold)
+        purpose.font = Theme.font(10.5, .regular)
+        purpose.lineBreakMode = .byTruncatingTail
+        purpose.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        summary.setContentCompressionResistancePriority(.required, for: .horizontal)
+        tri.isHidden = true
+        tri.onClick = { [weak self] in self?.onToggle?() }
+
+        let trail = NSStackView(views: [summary, tri])
+        trail.spacing = 8
+        trail.setHuggingPriority(.required, for: .horizontal)
+        for v in [title, purpose, trail, content] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        let mid = Self.headerH / 2
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 23),
+            title.centerYAnchor.constraint(equalTo: topAnchor, constant: mid),
+            purpose.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+            purpose.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
+            purpose.trailingAnchor.constraint(lessThanOrEqualTo: trail.leadingAnchor, constant: -8),
+            trail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            trail.centerYAnchor.constraint(equalTo: topAnchor, constant: mid),
+
+            content.topAnchor.constraint(equalTo: topAnchor, constant: Self.headerH + (inset > 0 ? 10 : 0)),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+        ])
+        applyInk()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(title s: String) { title.stringValue = s }
+    func set(purpose s: String) { purpose.stringValue = s }
+    /// Empty value and tail hide the pill.
+    func set(summary value: String, tail: String) {
+        let text = [value, tail].filter { !$0.isEmpty }.joined(separator: " ")
+        summary.isHidden = text.isEmpty
+        summary.set(text: text, color: accent, ink: onDark ? nil : .labelColor)
+    }
+    func setFolded(_ folded: Bool) { tri.pointsUp = !folded }
+
+    // True when neon accents read: on the dark bed, or in dark appearance.
+    private var onDark: Bool {
+        bed || effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    private func applyInk() {
+        title.textColor = onDark ? accent : .labelColor
+        purpose.textColor = bed ? NeonInk.faint : .tertiaryLabelColor
+        summary.set(ink: onDark ? nil : .labelColor)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyInk()
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        let a = resolvedSRGB(Metric.accent(.saved))
-        let b = resolvedSRGB(Metric.accent(.focus))
+        let c = resolvedSRGB(accent)
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                                xRadius: radius, yRadius: radius)
-
-        // The card always lays its own bed, in both appearances — dark in both, so the
-        // accents always have something to glow against. See the note on NeonInk for why
-        // this also decides the text colour on top.
-        NeonInk.bed(in: self).setFill()
+                                xRadius: Self.radius, yRadius: Self.radius)
+        if bed {
+            NeonInk.bed(in: self).setFill()
+            path.fill()
+        }
+        c.withAlphaComponent(bed ? 0.07 : 0.05).setFill()
         path.fill()
 
-        // The resting wash IS what the hover state used to be — the old resting value was
-        // too faint to separate the card from the window at a glance. Hover now lifts
-        // from there, for the surfaces where hovering still means anything.
-        NSGradient(starting: a.withAlphaComponent(hovering ? 0.21 : 0.15),
-                   ending: b.withAlphaComponent(hovering ? 0.10 : 0.07))?
-            .draw(in: path, angle: -45)
+        let band = NSRect(x: 0, y: bounds.height - Self.headerH, width: bounds.width, height: Self.headerH)
+        NSGraphicsContext.current?.saveGraphicsState()
+        path.addClip()
+        c.withAlphaComponent(0.14).setFill()
+        band.fill()
+        c.withAlphaComponent(0.24).setFill()
+        NSRect(x: 0, y: band.minY - 1, width: bounds.width, height: 1).fill()
+        NSGraphicsContext.current?.restoreGraphicsState()
+
         path.lineWidth = 1
-        a.withAlphaComponent(hovering ? 0.44 : 0.34).setStroke()
+        c.withAlphaComponent(0.26).setStroke()
         path.stroke()
+
+        let bar = NSBezierPath(roundedRect: NSRect(x: 12, y: band.midY - 7, width: 3, height: 14),
+                               xRadius: 1.5, yRadius: 1.5)
+        NSGraphicsContext.current?.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowColor = c.withAlphaComponent(0.8)
+        glow.shadowBlurRadius = 5
+        glow.shadowOffset = .zero
+        glow.set()
+        c.setFill()
+        bar.fill()
+        NSGraphicsContext.current?.restoreGraphicsState()
     }
 }
 
-// The 24×24 disclosure control: ▼ on the collapsed bar, ▲ in the hero's top-right
-// corner. Filled with the ring's own gradient so the two read as one control moving.
+// The 24×24 fold control in a block header: ▲ open, ▼ folded. Filled with the ring's
+// own gradient.
 private final class TriangleButton: NSView {
 
     var onClick: (() -> Void)?
-    private let pointsUp: Bool
+    var pointsUp: Bool { didSet { needsDisplay = true } }
     private var hovering = false { didSet { needsDisplay = true } }
 
     init(pointsUp: Bool) {
@@ -1789,34 +1872,47 @@ private final class TriangleButton: NSView {
     }
 }
 
-// A tiny tinted capsule for the 「良好」 verdict beside the title.
+// The tinted capsule for a block's summary (「58 待提升」). `ink` overrides the text colour
+// where the accent itself would not read (light window).
 private final class TagPill: NSView {
 
     private var text = ""
     private var color = NSColor.labelColor
-    private let padX: CGFloat = 6, height: CGFloat = 15
+    private var ink: NSColor?
+    private let size: CGFloat, height: CGFloat
+    private let padX: CGFloat = 7
 
-    func set(text: String, color: NSColor) {
+    init(size: CGFloat, height: CGFloat) {
+        self.size = size
+        self.height = height
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(text: String, color: NSColor, ink: NSColor?) {
         self.text = text
         self.color = color
+        self.ink = ink
         invalidateIntrinsicContentSize()
         needsDisplay = true
     }
 
+    func set(ink: NSColor?) { self.ink = ink; needsDisplay = true }
+
     private var attrs: [NSAttributedString.Key: Any] {
-        [.font: Theme.rounded(9.5, .bold), .foregroundColor: color]
+        [.font: Theme.roundedMono(size, .bold), .foregroundColor: ink ?? color]
     }
 
     override var intrinsicContentSize: NSSize {
         guard !text.isEmpty else { return NSSize(width: 0, height: height) }
-        return NSSize(width: (text as NSString).size(withAttributes: attrs).width + padX * 2,
+        return NSSize(width: ceil((text as NSString).size(withAttributes: attrs).width) + padX * 2,
                       height: height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard !text.isEmpty else { return }
         let c = resolvedSRGB(color)
-        let path = NSBezierPath(roundedRect: bounds, xRadius: height / 2, yRadius: height / 2)
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5)
         c.withAlphaComponent(0.16).setFill()
         path.fill()
         let s = text as NSString

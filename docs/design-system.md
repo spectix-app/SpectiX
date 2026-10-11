@@ -57,9 +57,13 @@
 >
 > ⚠️ 换主题后**必须整体重建 UI**：颜色和圆角在建 view 时就烘进 layer 了，已存在的 view 不会自己变。走 `AppSettings.themeID`（它发 `themeDidChange` 驱动重建），别直接调 `Theme.apply(_:)`。
 
+## 回顾页四个区块（改 `SectionBlock` 或回顾页分区前读）
+
+回顾页从上到下四块：效能 · 成绩 · 帮了你什么 · 消耗（`design/insights-sections-3-proposals.html` 方案 13，2026-10-10 用户定）。每块是一个 `SectionBlock`（`ImpactView.swift`）：带本区颜色的淡底 + 同色描边，标题栏铺更深一档的同色，左侧一根发光竖条，标题后跟一句「这块是干什么的」，右端可选一颗小结药丸和折叠 ▲。**▲ 只收效能区的曲线**，成绩条永远在。
+
 ## 霓虹面在两种外观下都是暗的（改效能面板任何颜色前必读）
 
-效能 tab 那两块 `NeonSurface`（折叠条 `FoldBar` + 展开后的整张 `PanelCard`）**自己铺一层暗底**
+回顾页的「效能」区块（`SectionBlock(bed: true)`，里面装折叠条 `FoldBar` 或展开后的分数 + 三条曲线）**自己铺一层暗底**
 （`NeonInk.bed(in:)`），不跟随窗口：浅色外观下是中灰蓝 `bed`，深色外观下是墨蓝 `darkBed`。
 以前两种外观共用中灰蓝，深色窗口里它比周围亮一大截、看着发白发灰（2026-10-10 用户报），
 深色那块是从四个候选的真实渲染里挑的（`design/impact-dark-bed.html`）。
@@ -72,7 +76,7 @@
 系统语义色** —— `.labelColor` 在浅色外观下翻成黑色，正好埋进自己铺的暗底里。卡内文字一律用
 `NeonInk.primary / .secondary / .faint`，网格线用 `NeonInk.rule`，它们在两种外观下都是浅色。
 
-**边界**：只有 `NeonSurface` 的子树受这条约束。指标行（`MetricRow` / `NeonBar`）和详情卡
+**边界**：只有 `bed: true` 的 `SectionBlock` 子树受这条约束。其余三个区块（成绩 / 帮了你什么 / 消耗）是叠在窗口上的淡色块，标题在浅色外观下退回 `.labelColor`，强调色只留在竖条和底色里。指标行（`MetricRow` / `NeonBar`）和详情卡
 （`DetailCard`）**坐在窗口上、不在卡上**，照常跟随系统色；`NeonBar` 解决同一个问题的方式相反 ——
 它没法给自己铺底，所以浅色下**用描边替代发光**。两张不同的床，两套配方，别互相搬。
 

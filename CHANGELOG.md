@@ -2,6 +2,23 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.11 — Two accounts under one address, and your own themes (2026-10-10)
+
+Verified on Claude Code 2.1.296.
+
+### New
+
+- **Accounts** — a personal plan and a company Team signed in with the same email address are now two separate rows, each with its own saved sign-in and its own quota. Signing in again from a terminal counts as a switch, and an open panel updates straight away.
+- **Settings → Theme** — drop a JSON file into `~/.claude/spectix/themes/` and it appears next to the built-in themes, with no restart. Themes are no longer held back for a paid tier.
+- **Insights** — the Stats tab is now called Insights and is split into four titled blocks, each with a line saying what it is for. The efficiency panel gains a row for the time you worked and a row for what it cost; folding it hides only the curves.
+- The break timer now carries on across a relaunch instead of starting again from zero.
+
+### Fixed
+
+- Signing in to a second organisation could make SpectiX crash the moment it opened: the account change redrew the header before the new account was recorded, and the redraw kept calling itself. It now records the account first.
+- Switching back to an account could look finished while Claude Code still could not sign in, because SpectiX restored a saved sign-in the CLI had already replaced. Such copies are now marked out of date and the switch falls back to the CLI's own login. Adding an account no longer leaves the current one behind in the same state.
+- The efficiency score timed your replies from when you left a session rather than when you arrived, so answering a prompt you were already looking at counted as slow. It now counts as answered on the spot.
+
 ## 1.10 — Busy sessions with many agents hover cleanly (2026-10-06)
 
 Verified on Claude Code 2.1.291.
