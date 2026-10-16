@@ -222,8 +222,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-    <key>CFBundleVersion</key><string>1.12</string>
-    <key>CFBundleShortVersionString</key><string>1.12</string>
+    <key>CFBundleVersion</key><string>1.13</string>
+    <key>CFBundleShortVersionString</key><string>1.13</string>
     <key>CFBundleExecutable</key><string>SpectiX</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>

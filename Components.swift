@@ -5155,14 +5155,29 @@ final class HeaderStatsView: NSView {
         let stale = usage.map { !$0.live } ?? false
         let note = stale ? L("　·　这个账号记着的数字，不是刚测的",
                              "　·　remembered for this account, not a current reading") : ""
-        session.configure(pct: usage?.sessionPct,
-                          foot: usage?.sessionResetsAt.flatMap { Self.fmtResetIn($0) } ?? unknownCountdown,
-                          tooltip: L("5 小时会话窗口", "5-hour session window") + note,
-                          stale: stale)
-        let wk = usage?.weekResetsAt.flatMap { Self.weekRemaining($0) }
-        week.configure(pct: usage?.weekPct, foot: wk?.short ?? unknownCountdown,
-                       tooltip: wk.map { $0.detail + note } ?? (note.isEmpty ? nil : note),
-                       stale: stale)
+        // Past its reset time the window is full again, whatever the last reading said
+        let now = Date().timeIntervalSince1970
+        func rolled(_ at: Double?) -> Bool { (at ?? 0) > 0 && now >= at! }
+        if rolled(usage?.sessionResetsAt) {
+            session.configure(pct: 0, foot: unknownCountdown,
+                              tooltip: L("5 小时会话窗口已经重置，现在满额可用",
+                                         "5-hour window has rolled over — full again"))
+        } else {
+            session.configure(pct: usage?.sessionPct,
+                              foot: usage?.sessionResetsAt.flatMap { Self.fmtResetIn($0) } ?? unknownCountdown,
+                              tooltip: L("5 小时会话窗口", "5-hour session window") + note,
+                              stale: stale)
+        }
+        if rolled(usage?.weekResetsAt) {
+            week.configure(pct: 0, foot: unknownCountdown,
+                           tooltip: L("本周窗口已经重置，现在满额可用",
+                                      "Weekly window has rolled over — full again"))
+        } else {
+            let wk = usage?.weekResetsAt.flatMap { Self.weekRemaining($0) }
+            week.configure(pct: usage?.weekPct, foot: wk?.short ?? unknownCountdown,
+                           tooltip: wk.map { $0.detail + note } ?? (note.isEmpty ? nil : note),
+                           stale: stale)
+        }
     }
 
     // ---- account panel ----

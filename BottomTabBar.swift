@@ -33,15 +33,8 @@ final class BottomTabBar: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        let specs: [(symbol: String, label: String)] = [
-            ("display", L("会话", "Sessions")),
-            ("chart.bar", L("数据", "Insights")),
-            ("clock.arrow.circlepath", L("最近项目", "Recent")),
-            ("wand.and.stars", L("技能", "Skills")),
-            ("gearshape", L("设置", "Settings")),
-        ]
-        for (i, spec) in specs.enumerated() {
-            let b = TabItemButton(symbol: spec.symbol, label: spec.label, index: i)
+        for (i, tab) in MainTab.allCases.enumerated() {
+            let b = TabItemButton(symbol: tab.symbol, label: tab.label, index: i)
             b.keyEquivalent = "\(i + 1)"
             b.keyEquivalentModifierMask = .command
             b.target = self
@@ -101,6 +94,23 @@ final class TabItemButton: NSButton {
 
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let pair = NSStackView()
+    /// Width the button needs to show icon + label without clipping.
+    private(set) var labelledWidth: CGFloat = 0
+
+    /// Icon-only when false (the label moves to the tooltip).
+    var showsLabel = true {
+        didSet {
+            guard showsLabel != oldValue else { return }
+            label.isHidden = !showsLabel || label.stringValue.isEmpty
+            toolTip = showsLabel ? nil : label.stringValue
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: pair.fittingSize.width + 8, height: 30)
+    }
     private let baseImage: NSImage?
     private var hovering = false
 
@@ -124,7 +134,7 @@ final class TabItemButton: NSButton {
         label.isHidden = text.isEmpty   // icon-only (permission-fix entry)
 
         // Icon + label centered as one unit.
-        let pair = NSStackView(views: [icon, label])
+        pair.setViews([icon, label], in: .leading)
         pair.orientation = .horizontal
         pair.spacing = 5
         pair.translatesAutoresizingMaskIntoConstraints = false
@@ -142,6 +152,7 @@ final class TabItemButton: NSButton {
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self))
         applyStyle()
+        labelledWidth = intrinsicContentSize.width   // after applyStyle sets the icon image
     }
     required init?(coder: NSCoder) { fatalError() }
 

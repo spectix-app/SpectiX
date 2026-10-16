@@ -679,8 +679,30 @@ final class ReorderTableView: NSTableView {
 }
 
 // The main window's four panes, in bottom-tab order (⌘1–⌘4).
+// Shared by the main window's tab bar and the popover footer, so both list the
+// same tabs in the same order.
 enum MainTab: Int, CaseIterable {
     case sessions, stats, recent, skills, settings
+
+    var symbol: String {
+        switch self {
+        case .sessions: return "display"
+        case .stats:    return "chart.bar"
+        case .recent:   return "clock.arrow.circlepath"
+        case .skills:   return "wand.and.stars"
+        case .settings: return "gearshape"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .sessions: return L("会话", "Sessions")
+        case .stats:    return L("数据", "Insights")
+        case .recent:   return L("最近项目", "Recent")
+        case .skills:   return L("技能", "Skills")
+        case .settings: return L("设置", "Settings")
+        }
+    }
 }
 
 // MARK: - App logo mark (wordmark companion)

@@ -2755,7 +2755,7 @@ class AppController: NSObject, NSApplicationDelegate {
         // Reloading a hidden window every 2.5s poll is pure waste — full
         // statsHeader.update + tableView.reloadData (rebuilds every cell) +
         // hoverDidReload against nothing on screen. Both open paths
-        // (openMainWindow / togglePopover) reload on show, so a hidden surface
+        // (showMainWindow / togglePopover) reload on show, so a hidden surface
         // has no stale data to worry about. `model.update(view)` above stays
         // unconditional — keyboard-jump priority reads the shared model even
         // when no surface is visible.
@@ -4159,6 +4159,11 @@ class AppController: NSObject, NSApplicationDelegate {
     private var codexDiskQuota: CodexUsage? = nil
     private var codexDiskQuotaAt: Double = 0
 
+    /// The switch the last immediate usage probe was fired for.
+    private var switchProbeAt: Double = 0
+    /// Gives up the spinner if the probe never lands (a probe takes ~8s).
+    private static let switchProbeSpinFor: Double = 30
+
     private func headerAgentInfo(rows: [SessionRow]) -> HeaderAgentInfo {
         // ★ Before anything below touches the book: the demo's fake percentages must
         // not be filed under the user's real address (see Demo, MARK Accounts).
@@ -4211,6 +4216,12 @@ class AppController: NSObject, NSApplicationDelegate {
         let codex = AgentAccounts.codex()
         AccountBook.note(.claude, claude)
         AccountBook.note(.codex, codex)
+        // Measure the new account right away instead of waiting for a turn end or a reopen
+        let switched = AccountBook.lastSwitch(.claude)
+        if switched > switchProbeAt {
+            switchProbeAt = switched
+            requestUsageProbe(minAge: 0)
+        }
         // File the quota against the account it was measured on. This is the only
         // moment that association exists: the numbers arrive with no owner attached,
         // and the owner is whoever is signed in right now.
@@ -4248,10 +4259,19 @@ class AppController: NSObject, NSApplicationDelegate {
         // No switch this run, or the reading is newer than one: it describes whoever
         // is signed in now, which is the account on the card. The common path.
         if switchedAt == 0 || (raw?.updatedAt ?? 0) > switchedAt { return raw }
+        let now = Date().timeIntervalSince1970
+        // Spins only for the first measurement after a switch, never for routine re-probes
+        let firstProbe = kind == .claude && switchProbeAt == switchedAt
+            && now - switchedAt < Self.switchProbeSpinFor
         guard let key,
               let u = AccountBook.list(kind).first(where: { $0.key == key })?.usage
-        else { return nil }
-        let now = Date().timeIntervalSince1970
+        else {
+            guard firstProbe else { return nil }
+            var snap = UsageSnapshot()
+            snap.live = false
+            snap.fetching = true
+            return snap
+        }
         var snap = UsageSnapshot()
         snap.sessionPct = u.sessionPct
         snap.sessionResetsAt = u.sessionResetsAt
@@ -4262,7 +4282,7 @@ class AppController: NSObject, NSApplicationDelegate {
         // own terms — it was asked about this account by name, which is exactly what
         // the two local sources cannot do. Same window the panel's rows use.
         snap.live = u.probed == true && now - u.readAt < AccountBook.probeFreshFor
-        snap.fetching = AccountBook.isProbing(kind, key: key)
+        snap.fetching = firstProbe || AccountBook.isProbing(kind, key: key)
         return snap
     }
 
@@ -5179,12 +5199,6 @@ class AppController: NSObject, NSApplicationDelegate {
         HotKeyStore.persist(action, combo)
         return hotKeys.rebind(action, combo: combo)
     }
-
-    // Settings, stats, and recent projects are all tabs of the main window now —
-    // open it deep-linked to the requested tab.
-    private func openSettings()       { showMainWindow(tab: .settings) }
-    private func openStats()          { showMainWindow(tab: .stats) }
-    private func openRecentProjects() { showMainWindow(tab: .recent) }
 
     // Open a project from history: a live session in that dir → the normal jump
     // (switchToSpace + AX raise); otherwise hand the folder to VSCode — `open -b`
@@ -7289,10 +7303,7 @@ class AppController: NSObject, NSApplicationDelegate {
     // rebuild the controller and re-attach them.
     private func wirePopover() {
         popoverController.onJump         = { [weak self] row in self?.popover.performClose(nil); self?.focus(row) }
-        popoverController.onOpenWindow   = { [weak self] in self?.popover.performClose(nil); self?.openMainWindow() }
-        popoverController.onOpenStats    = { [weak self] in self?.popover.performClose(nil); self?.openStats() }
-        popoverController.onOpenRecent   = { [weak self] in self?.popover.performClose(nil); self?.openRecentProjects() }
-        popoverController.onOpenSettings = { [weak self] in self?.popover.performClose(nil); self?.openSettings() }
+        popoverController.onOpenTab      = { [weak self] tab in self?.popover.performClose(nil); self?.showMainWindow(tab: tab) }
         popoverController.onFixPermission = { [weak self] in self?.popover.performClose(nil); self?.presentAccessibilityPrompt() }
     }
 
@@ -7324,8 +7335,6 @@ class AppController: NSObject, NSApplicationDelegate {
         if wasVisible { showMainWindow(tab: .settings) }
         refresh()
     }
-
-    @objc private func openMainWindow() { showMainWindow() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 

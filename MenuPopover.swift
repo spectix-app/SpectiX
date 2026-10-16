@@ -7,8 +7,8 @@ import Cocoa
 // its modal tracking loop swallows the drag events reorder needs. Collapse a folder
 // or drag to reorder here and the main window reflects it (shared ListModel). A
 // The footer is a flat bottom bar isomorphic to the main window's tab bar
-// (design/menu-popover-scheme6.html variant A): four icon+label entries that
-// deep-link to the matching main-window tab (会话 / 最近项目 / 统计 / 设置),
+// (design/menu-popover-scheme6.html variant A): one icon+label entry per
+// main-window tab (MainTab, same order), each deep-linking to that tab,
 // with the permission-fix entry appearing on the far left only when access is
 // missing. Refresh / quit moved
 // up to mini glass buttons in the header's top-right.
@@ -21,13 +21,11 @@ final class MenuPopoverController: NSViewController {
     // the subscription quota row (会话/本周 %). The main window keeps the full one.
     private let statsHeader = HeaderStatsView(compact: true)
     private var warnButton: TabItemButton!   // permission fix (far left, warn)
-    private var mainButton: TabItemButton!    // 会话 entry (opens home · sessions)
+    private var entryButtons: [TabItemButton] = []
+    private let entries = NSStackView()
 
     var onJump: ((SessionRow) -> Void)?
-    var onOpenWindow: (() -> Void)?
-    var onOpenStats: (() -> Void)?
-    var onOpenRecent: (() -> Void)?
-    var onOpenSettings: (() -> Void)?
+    var onOpenTab: ((MainTab) -> Void)?
     var onFixPermission: (() -> Void)?
 
     // Live width; seeded from the persisted value, mutated by the resize grip.
@@ -57,7 +55,7 @@ final class MenuPopoverController: NSViewController {
             AppSettings.hide(cwd: cwd)
             self?.hiddenBar.showUndo(folder: folder, cwd: cwd, onboarding: first)
         }
-        hiddenBar.onOpenHidden = { [weak self] in self?.onOpenSettings?() }
+        hiddenBar.onOpenHidden = { [weak self] in self?.onOpenTab?(.settings) }
         hiddenBar.onUndo = { cwd in AppSettings.unhide(cwd: cwd) }
         hiddenBar.onHeightChange = { [weak self] in self?.resize() }
     }
@@ -88,8 +86,9 @@ final class MenuPopoverController: NSViewController {
         glass.addSubview(hiddenBar)
 
         // Footer: flat bottom bar (variant A). Permission fix (warn, icon-only)
-        // hugs the left and collapses when access is granted; the four deep-link
-        // entries fill the rest equally.
+        // hugs the left and collapses when access is granted; the deep-link
+        // entries share the rest by label width, dropping to icon-only when the
+        // labels don't all fit.
         warnButton = TabItemButton(symbol: "exclamationmark.triangle", label: "", index: 0)
         warnButton.warn = true
         warnButton.toolTip = L("开启跳转权限（辅助功能）", "Enable jump permission (Accessibility)")
@@ -98,14 +97,16 @@ final class MenuPopoverController: NSViewController {
         warnButton.isHidden = true
         warnButton.widthAnchor.constraint(equalToConstant: 38).isActive = true
 
-        mainButton = makeEntry("macwindow", L("主界面", "Home"), #selector(openWindow), L("打开主界面 · 会话", "Open home · Sessions"))
-        let statsEntry = makeEntry("chart.bar", L("数据", "Insights"), #selector(statsClicked), L("数据（效能 / 用量 / 工作时长）", "Insights (impact / usage / your hours)"))
-        let recentEntry = makeEntry("clock.arrow.circlepath", L("最近项目", "Recent"), #selector(recentClicked), L("最近项目", "Recent"))
-        let settingsEntry = makeEntry("gearshape", L("设置", "Settings"), #selector(settingsClicked), L("设置（快捷键）", "Settings (hotkeys)"))
-
-        let entries = NSStackView(views: [mainButton, statsEntry, recentEntry, settingsEntry])
+        entryButtons = MainTab.allCases.map { tab in
+            let b = TabItemButton(symbol: tab.symbol, label: tab.label, index: tab.rawValue)
+            b.target = self
+            b.action = #selector(entryClicked(_:))
+            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            return b
+        }
+        entries.setViews(entryButtons, in: .leading)
         entries.orientation = .horizontal
-        entries.distribution = .fillEqually
+        entries.distribution = .fillProportionally
         entries.spacing = 4
 
         let footer = NSStackView(views: [warnButton, entries])
@@ -181,16 +182,6 @@ final class MenuPopoverController: NSViewController {
         view = container
     }
 
-    // A flat footer entry: reuses the tab bar's button, wired as a deep-link
-    // action (never selected, no keyEquivalent).
-    private func makeEntry(_ symbol: String, _ label: String, _ action: Selector, _ tip: String) -> TabItemButton {
-        let b = TabItemButton(symbol: symbol, label: label, index: 0)
-        b.target = self
-        b.action = action
-        b.toolTip = tip
-        return b
-    }
-
     func reload(_ rows: [SessionRow], usage: UsageSnapshot? = nil,
                 header: HeaderAgentInfo? = nil) {
         _ = view  // force the view to load if it hasn't (macOS 13-safe; loadViewIfNeeded() is 14+)
@@ -206,6 +197,7 @@ final class MenuPopoverController: NSViewController {
         // tooltip for that case — "turn the permission on" is confusing advice when the
         // switch is already on.
         warnButton.isHidden = AXIsProcessTrusted() && !AppController.axDegraded
+        view.needsLayout = true   // re-check whether entry labels fit
         warnButton.toolTip = AXIsProcessTrusted()
             ? L("辅助功能权限已失效，点这里看怎么修", "Accessibility permission has gone stale — click for the fix")
             : L("开启跳转权限（辅助功能）", "Enable jump permission (Accessibility)")
@@ -255,11 +247,18 @@ final class MenuPopoverController: NSViewController {
         preferredContentSize = NSSize(width: popoverWidth, height: min(desired, usable))
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let needed = entryButtons.reduce(0) { $0 + $1.labelledWidth }
+            + entries.spacing * CGFloat(entryButtons.count - 1)
+        let fits = entries.bounds.width >= needed
+        for b in entryButtons { b.showsLabel = fits }
+    }
+
     @objc private func fixPermission() { onFixPermission?() }
-    @objc private func openWindow()    { onOpenWindow?() }
-    @objc private func statsClicked()  { onOpenStats?() }
-    @objc private func recentClicked() { onOpenRecent?() }
-    @objc private func settingsClicked(){ onOpenSettings?() }
+    @objc private func entryClicked(_ sender: TabItemButton) {
+        if let tab = MainTab(rawValue: sender.index) { onOpenTab?(tab) }
+    }
 }
 
 // MARK: - Resize grip

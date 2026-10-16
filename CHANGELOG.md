@@ -2,6 +2,19 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.13 — The menu-bar popover has every tab the main window has (2026-10-16)
+
+Verified on Claude Code 2.1.301.
+
+### New
+
+- The bar along the bottom of the menu-bar popover now lists the same tabs as the main window, in the same order: `Sessions`, `Insights`, `Recent`, `Skills` and `Settings`. Skills used to be reachable only from the main window. When the popover is too narrow for every label, the tabs show their icons alone and name themselves when you hover.
+- When you switch Claude accounts, the quota in the header is measured for the new account straight away, with a spinner while that first reading is on its way. Previously the old figures stayed up until a session finished a turn or you reopened the window.
+
+### Fixed
+
+- Once a quota window had reset, the header kept showing the percentage from before the reset until a fresh reading arrived, so a limit you had already got back still looked used up. It now shows 0% as soon as the reset time has passed.
+
 ## 1.12 — See the dev servers your sessions left running, and stop them (2026-10-11)
 
 Verified on Claude Code 2.1.296.
