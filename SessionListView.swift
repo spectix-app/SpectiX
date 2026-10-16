@@ -821,16 +821,24 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
               case .header(let folder, let kind, _, _) = items[row],
               let cwd = kind.projectCwd else { return nil }
 
-        // Right-click ON the leading badge → the icon-editing menu (Notion-style);
-        // anywhere else on the header → the hide-project menu.
         let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? HeaderCell
-        if let cell, let loc = NSApp.currentEvent?.locationInWindow, cell.badgeHit(loc) {
-            return iconMenu.menu(cwd: cwd, anchor: cell.iconAnchor)
-        }
-
         onLearned?("headerMenu")
         let menu = NSMenu()
-        let display = AppController.isDesktopCwd(cwd) ? cwd : folder
+        let display = AppController.isDesktopCwd(cwd) && AppSettings.customName(cwd: cwd) == nil ? cwd : folder
+        let rename = NSMenuItem(title: L("重命名…", "Rename…"), action: #selector(renameClicked(_:)), keyEquivalent: "")
+        rename.target = self
+        rename.representedObject = ["cwd": cwd, "folder": folder]
+        menu.addItem(rename)
+        if let cell { menu.addItem(iconMenu.item(cwd: cwd, anchor: cell.iconAnchor)) }
+        if GitBranch.current(cwd: cwd) != nil {
+            let branch = NSMenuItem(title: L("显示当前分支", "Show Current Branch"),
+                                    action: #selector(branchClicked(_:)), keyEquivalent: "")
+            branch.target = self
+            branch.state = AppSettings.showsBranch(cwd: cwd) ? .on : .off
+            branch.representedObject = ["cwd": cwd]
+            menu.addItem(branch)
+        }
+        menu.addItem(.separator())
         // Pin-to-top: pinned folders float to the top of the list.
         let pinned = model.isPinned(cwd)
         let pinTitle = pinned ? L("取消置顶", "Unpin") : L("置顶「\(display)」", "Pin \"\(display)\"")
@@ -844,6 +852,34 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         item.representedObject = ["cwd": cwd, "folder": display]
         menu.addItem(item)
         return menu
+    }
+
+    @objc private func branchClicked(_ sender: NSMenuItem) {
+        guard let cwd = (sender.representedObject as? [String: String])?["cwd"] else { return }
+        AppSettings.toggleBranch(cwd: cwd)
+    }
+
+    // Prompt for a new header title; an empty field restores the folder name.
+    @objc private func renameClicked(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let cwd = info["cwd"], let folder = info["folder"] else { return }
+        let alert = NSAlert()
+        alert.messageText = L("重命名项目", "Rename project")
+        alert.informativeText = L("留空恢复为文件夹名。", "Leave empty to use the folder name.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let custom = AppSettings.customName(cwd: cwd)
+        field.stringValue = custom ?? ""
+        field.placeholderString = custom == nil ? folder : (cwd as NSString).lastPathComponent
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("确定", "OK"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        PopoverHold.begin()
+        let ok = alert.runModal() == .alertFirstButtonReturn
+        PopoverHold.end()
+        guard ok else { return }
+        AppSettings.setCustomName(field.stringValue, cwd: cwd)
     }
 
     // Toggle the project's pin and re-derive the list in place — pinned folders jump to

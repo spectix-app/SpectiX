@@ -342,12 +342,47 @@ enum AppSettings {
     static func hide(cwd: String) { var s = hiddenCwds; s.insert(cwd); hiddenCwds = s }
     static func unhide(cwd: String) { var s = hiddenCwds; s.remove(cwd); hiddenCwds = s }
 
+    // MARK: Custom project names
+    //
+    // A user-chosen title shown on a project header in place of the folder name.
+    // Keyed by cwd, same as hiddenCwds. Empty clears it.
+    private static let customNamesKey = "customNames"
+
+    static var customNames: [String: String] {
+        UserDefaults.standard.dictionary(forKey: customNamesKey) as? [String: String] ?? [:]
+    }
+
+    static func customName(cwd: String) -> String? { customNames[cwd] }
+
+    static func setCustomName(_ name: String?, cwd: String) {
+        var d = customNames
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty { d.removeValue(forKey: cwd) } else { d[cwd] = trimmed }
+        UserDefaults.standard.set(d, forKey: customNamesKey)
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
+    // MARK: Branch on project headers
+
+    private static let branchHiddenCwdsKey = "branchHiddenCwds"
+
+    static func showsBranch(cwd: String) -> Bool {
+        !(UserDefaults.standard.stringArray(forKey: branchHiddenCwdsKey) ?? []).contains(cwd)
+    }
+
+    static func toggleBranch(cwd: String) {
+        var s = Set(UserDefaults.standard.stringArray(forKey: branchHiddenCwdsKey) ?? [])
+        if s.contains(cwd) { s.remove(cwd) } else { s.insert(cwd) }
+        UserDefaults.standard.set(Array(s), forKey: branchHiddenCwdsKey)
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
     // MARK: Custom project icons
     //
     // A user-chosen glyph shown on a project header's badge in place of the default
     // VSCode monogram / desktop asterisk. Keyed by cwd (the identity stable across
     // terminal restarts, same as hiddenCwds). Notion-style: right-click the header
-    // badge → 编辑图标 → pick an emoji, or 上传图片… → pick an image file.
+    // header → 修改图标… → pick an emoji, or 🖼 上传 → pick an image file.
     //
     // Two kinds, one slot: a project has an emoji OR an image, never both — setting
     // either clears the other, so every reader can just switch on `customIcon(cwd:)`.

@@ -183,6 +183,7 @@ final class ListModel {
                 for p in group { out[p] = (p as NSString).abbreviatingWithTildeInPath }
             }
         }
+        for (p, name) in AppSettings.customNames where out[p] != nil { out[p] = name }
         return out
     }
 
@@ -397,5 +398,44 @@ final class ListModel {
     func togglePin(_ cwd: String) {
         if let i = pinnedFolders.firstIndex(of: cwd) { pinnedFolders.remove(at: i) }
         else { pinnedFolders.append(cwd) }
+    }
+}
+
+// Current git branch of a project folder, read straight from .git/HEAD.
+enum GitBranch {
+    private static var cache: [String: (branch: String?, at: Date)] = [:]
+
+    static func current(cwd: String) -> String? {
+        if let hit = cache[cwd], Date().timeIntervalSince(hit.at) < 3 { return hit.branch }
+        let b = read(cwd: cwd)
+        cache[cwd] = (b, Date())
+        return b
+    }
+
+    private static func read(cwd: String) -> String? {
+        let fm = FileManager.default
+        var dir = (cwd as NSString).standardizingPath
+        while !dir.isEmpty {
+            let dotGit = (dir as NSString).appendingPathComponent(".git")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: dotGit, isDirectory: &isDir) {
+                var gitDir = dotGit
+                if !isDir.boolValue {
+                    // Worktree / submodule: ".git" is a file holding "gitdir: <path>"
+                    guard let s = try? String(contentsOfFile: dotGit, encoding: .utf8),
+                          let line = s.split(separator: "\n").first, line.hasPrefix("gitdir:") else { return nil }
+                    let p = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                    gitDir = p.hasPrefix("/") ? p : (dir as NSString).appendingPathComponent(p)
+                }
+                guard let head = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("HEAD"),
+                                             encoding: .utf8) else { return nil }
+                let h = head.trimmingCharacters(in: .whitespacesAndNewlines)
+                if h.hasPrefix("ref: refs/heads/") { return String(h.dropFirst("ref: refs/heads/".count)) }
+                return h.isEmpty ? nil : String(h.prefix(7))
+            }
+            if dir == "/" { break }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        return nil
     }
 }

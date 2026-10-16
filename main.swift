@@ -7410,7 +7410,16 @@ class AppController: NSObject, NSApplicationDelegate {
 
 // MARK: - Popover lifecycle
 
+// Keeps the menu-bar popover open while a dialog launched from it is up.
+enum PopoverHold {
+    private(set) static var count = 0
+    static func begin() { count += 1 }
+    static func end() { count = max(0, count - 1) }
+}
+
 extension AppController: NSPopoverDelegate {
+    func popoverShouldClose(_ popover: NSPopover) -> Bool { PopoverHold.count == 0 }
+
     // Every close path funnels through here (outside click, jump, action button),
     // so tear the global monitor down in one place.
     func popoverDidClose(_ notification: Notification) {

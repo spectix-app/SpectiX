@@ -1365,7 +1365,19 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
         topGap.constant = isFirst ? 0 : 8
         // A pinned project floats to the top; mark its header with a leading 📌 so the
         // reason it's parked up here is obvious. Zero extra layout — rides the label.
-        folderLabel.stringValue = pinned ? "📌 " + folder : folder
+        let title = pinned ? "📌 " + folder : folder
+        if case .project(let cwd) = kind, AppSettings.showsBranch(cwd: cwd), let branch = GitBranch.current(cwd: cwd) {
+            let para = NSMutableParagraphStyle()
+            para.lineBreakMode = .byTruncatingTail
+            let text = NSMutableAttributedString(string: title, attributes: [
+                .font: folderLabel.font as Any, .foregroundColor: NSColor.labelColor, .paragraphStyle: para])
+            text.append(NSAttributedString(string: "  ⎇ " + branch, attributes: [
+                .font: Theme.rounded(12, .medium), .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: para]))
+            folderLabel.attributedStringValue = text
+        } else {
+            folderLabel.stringValue = title
+        }
         // A project whose VSCode window is open but holds no session arrives as a single
         // zero bucket (ListModel.projectItems) — the only way counts carries a 0, since
         // ListModel.counts() drops empty buckets. It renders exactly like any other header

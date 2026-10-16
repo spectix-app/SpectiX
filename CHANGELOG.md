@@ -2,6 +2,20 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.14 — Name your projects, and see which branch each one is on (2026-10-16)
+
+Verified on Claude Code 2.1.301.
+
+### New
+
+- **Rename…** — right-click a project header to give it a name of your own. Only the title changes; the folder on disk is left alone. Clear the field to go back to the folder name. The new name also shows in the Recent tab and in the hidden-projects list in Settings.
+- Each project header now shows the git branch its folder is checked out on, in small grey text after the title. A long branch ends in an ellipsis rather than pushing the counts aside, and a branch switch in your terminal shows up within a few seconds. Untick **Show Current Branch** in the header’s right-click menu to hide it for that project.
+- **Edit Icon…** now sits in the header’s right-click menu wherever you click on the row, and opens the picker directly. Upload, random and remove all live inside the picker, so there is one place to change a project’s icon instead of a separate menu on the badge.
+
+### Fixed
+
+- Choosing Rename or Edit Icon from the menu-bar popover closed the popover the moment the dialog opened, so you could not see the project you were changing. The popover now stays open until you finish.
+
 ## 1.13 — The menu-bar popover has every tab the main window has (2026-10-16)
 
 Verified on Claude Code 2.1.301.

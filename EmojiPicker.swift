@@ -594,6 +594,7 @@ extension EmojiIconPicker {
 
         activePanel = panel
         activeController = picker
+        PopoverHold.begin()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
 
@@ -613,6 +614,7 @@ extension EmojiIconPicker {
     static func dismiss() {
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
+        if activePanel != nil { PopoverHold.end() }
         activePanel?.orderOut(nil)
         activePanel = nil
         activeController = nil
@@ -621,7 +623,7 @@ extension EmojiIconPicker {
 
 // MARK: - Project icon menu (shared by every place a project icon is shown)
 //
-// The 编辑图标 / 上传图片 / 随机 emoji / 移除自定义 menu plus the actions behind it.
+// The 修改图标… entry plus the picker and image import behind it.
 // Two call sites — the folder header badge (SessionListView) and a recent-projects
 // row — so it lives here instead of being copied into either view.
 final class ProjectIconMenu: NSObject {
@@ -634,25 +636,20 @@ final class ProjectIconMenu: NSObject {
     // panel and the anchor (or the menu-bar popover holding it) may be gone by the
     // time the action fires.
     func menu(cwd: String, anchor: NSView) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(item(cwd: cwd, anchor: anchor))
+        return menu
+    }
+
+    // The single 修改图标… entry; upload / random / remove live inside the picker.
+    func item(cwd: String, anchor: NSView) -> NSMenuItem {
         self.cwd = cwd
         if let win = anchor.window {
             anchorRect = win.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         }
-        let menu = NSMenu()
-        for (title, action) in [(L("编辑图标…", "Edit Icon…"), #selector(editClicked)),
-                                (L("上传图片…", "Upload Image…"), #selector(uploadClicked)),
-                                (L("随机 emoji", "Random Emoji"), #selector(randomClicked))] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        let remove = NSMenuItem(title: L("移除自定义", "Remove Custom"),
-                                action: #selector(removeClicked), keyEquivalent: "")
-        remove.target = self
-        remove.isEnabled = AppSettings.customIcon(cwd: cwd) != nil
-        menu.addItem(remove)
-        return menu
+        let item = NSMenuItem(title: L("修改图标…", "Edit Icon…"), action: #selector(editClicked), keyEquivalent: "")
+        item.target = self
+        return item
     }
 
     @objc private func editClicked() {
@@ -665,16 +662,6 @@ final class ProjectIconMenu: NSObject {
             onRemove: { AppSettings.removeCustomIcon(cwd: cwd) })
     }
 
-    @objc private func uploadClicked() { pickImage(cwd: cwd) }
-
-    @objc private func randomClicked() {
-        guard let e = EmojiCatalog.all.randomElement() else { return }
-        AppSettings.noteRecentEmoji(e)
-        AppSettings.setCustomIcon(e, cwd: cwd)
-    }
-
-    @objc private func removeClicked() { AppSettings.removeCustomIcon(cwd: cwd) }
-
     // Ask for an image file and make it the project's badge. Modal rather than a sheet:
     // the header often lives in the menu-bar popover, which has no window worth
     // attaching to (and closes the moment focus moves).
@@ -686,7 +673,10 @@ final class ProjectIconMenu: NSObject {
         panel.prompt = L("使用", "Use")
         panel.message = L("选一张图片作为项目图标", "Choose an image for this project's icon")
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        PopoverHold.begin()
+        let picked = panel.runModal() == .OK ? panel.url : nil
+        PopoverHold.end()
+        guard let url = picked else { return }
         // Anything NSImage can't decode (a corrupt file wearing an image extension)
         // just beeps — there's nothing to fall back to and nothing was changed.
         guard let file = AppSettings.importIconImage(from: url) else { NSSound.beep(); return }

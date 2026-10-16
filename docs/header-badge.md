@@ -9,7 +9,7 @@
 
 ## 自定义 header 图标（emoji 选择器 + 上传图片）
 
-右键 project header 的**徽章**（不是整行）→ 弹菜单 `编辑图标… / 上传图片… / 随机 emoji / 移除自定义`。「编辑图标」开一个 Notion 式 emoji 选择器（搜索 + 分类跳转条 + 分区网格 + 底部 随机/🖼 上传/移除）。设计稿：`design/emoji-icon-picker.html`。
+右键 project header（整行任意位置）→ 菜单 `重命名… / 修改图标… / 置顶 / 隐藏`。「修改图标…」开一个 Notion 式 emoji 选择器（搜索 + 分类跳转条 + 分区网格 + 底部 随机/🖼 上传/移除）。设计稿：`design/emoji-icon-picker.html`。
 
 **两种图标源，共用一个槽位**（`AppSettings.CustomIcon` 枚举 `.emoji` / `.image`）：设一个自动清另一个，「移除自定义」两者都清。所有读取点只 switch `AppSettings.customIcon(cwd:)`，映射成 `LogoBadge.Mode` 一律走 `LogoBadge.mode(for:)`（**加新图标源只改这一处**）。
 
