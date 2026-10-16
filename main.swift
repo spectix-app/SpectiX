@@ -2967,7 +2967,10 @@ class AppController: NSObject, NSApplicationDelegate {
             // this is a helper, not a session. Belt-and-braces with the subcommand
             // denylist: ChatGPT.app and the VSCode extension each ship their OWN `codex`
             // binary, and their argv is theirs to change — the tty test doesn't care.
-            if kind == .codex && (bsd?.tty ?? "").isEmpty { continue }
+            // ★ Claude too, chat panels aside: Chrome's extension bridge runs
+            // `claude --chrome-native-host` under Chrome with no tty — a row with no
+            // state and nothing to jump to.
+            if !chatPanel && (bsd?.tty ?? "").isEmpty { continue }
             // One parent-chain walk resolves the host GUI app; map its bundle id onto
             // both a TerminalApp (native emulator) and an EditorApp (VSCode family).
             // ★ Both stay nil for a host we don't support — no `?? .vscode` fallback

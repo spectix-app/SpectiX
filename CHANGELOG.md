@@ -2,6 +2,14 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.15 — No more phantom rows from Claude in Chrome (2026-10-16)
+
+Verified on Claude Code 2.1.301.
+
+### Fixed
+
+- When the Claude in Chrome extension connected to Claude Code, the list grew extra rows grouped under Chrome. They were the small bridge processes Chrome starts to talk to Claude Code, not sessions you could work in, so they never showed a status and clicking them did nothing. Processes that run outside any terminal are now left out of the list, while the chat panel inside VS Code still appears as before.
+
 ## 1.14 — Name your projects, and see which branch each one is on (2026-10-16)
 
 Verified on Claude Code 2.1.301.
