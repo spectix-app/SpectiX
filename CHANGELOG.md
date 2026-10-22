@@ -2,6 +2,20 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.16 — Run your own scripts and Claude skills from one click (2026-10-22)
+
+Verified on Claude Code 2.1.308.
+
+### New
+
+- **Quick actions** — a wrench now sits at the right end of the bottom bar, in both the menu-bar popover and the main window. It opens a drawer of tiles, and each tile runs one thing: a shell command, a Claude Code skill such as `/morning`, or a plain prompt for Claude. Click `+` to add one, or right-click a tile to run, stop, edit or delete it.
+- Actions run in the background by default and tell you how they went with a toast: green when they finish, red when they fail. Click the toast to read the full output, or right-click the tile later and pick **Last output**. Choose **In a Terminal window** for an action that needs you to answer questions as it runs.
+- Your actions are kept in a plain file, `~/.claude/spectix/actions.json`, inside the same folder SpectiX already uses. Because it is just a file, you can ask any Claude Code session to add a button for you, and the drawer picks the change up the next time you open it.
+
+### Fixed
+
+- Switching git branch in a project’s folder did not always update the branch name on its header. The name only refreshed once something else about the row changed, so it could show the old branch for a long time. It now updates within a few seconds of the switch on its own.
+
 ## 1.15 — No more phantom rows from Claude in Chrome (2026-10-16)
 
 Verified on Claude Code 2.1.301.

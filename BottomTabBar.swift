@@ -12,6 +12,8 @@ import Cocoa
 final class BottomTabBar: NSView {
 
     var onSelect: ((Int) -> Void)?
+    /// Quick-actions wrench at the far right (QuickActions.swift); the owner wires its drawer.
+    let toolButton = QuickActionsButton()
 
     private let border = NSView()
     private var buttons: [TabItemButton] = []
@@ -44,14 +46,27 @@ final class BottomTabBar: NSView {
         }
         buttons[0].isOn = true
 
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(divider)
+        addSubview(toolButton)
+
         NSLayoutConstraint.activate([
+            toolButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            toolButton.centerYAnchor.constraint(equalTo: stack.centerYAnchor),
+            divider.trailingAnchor.constraint(equalTo: toolButton.leadingAnchor, constant: -4),
+            divider.centerYAnchor.constraint(equalTo: stack.centerYAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 16),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+
             border.topAnchor.constraint(equalTo: topAnchor),
             border.leadingAnchor.constraint(equalTo: leadingAnchor),
             border.trailingAnchor.constraint(equalTo: trailingAnchor),
             border.heightAnchor.constraint(equalToConstant: 1),
 
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stack.trailingAnchor.constraint(equalTo: divider.leadingAnchor, constant: -4),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 7),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])

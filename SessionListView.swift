@@ -266,7 +266,8 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
                 let source = kind.projectCwd.map { model.source(forCwd: $0) } ?? .vscode
                 let pinned = kind.projectCwd.map { model.isPinned($0) } ?? false
                 let c = counts.map { "\($0.0):\($0.1)" }.joined(separator: ",")
-                return "H¦\(folder)¦\(kind.collapseKey)¦\(collapsed)¦\(c)¦\(source)¦\(pinned)"
+                let branch = kind.projectCwd.flatMap { AppSettings.showsBranch(cwd: $0) ? GitBranch.current(cwd: $0) : nil } ?? ""
+                return "H¦\(folder)¦\(kind.collapseKey)¦\(collapsed)¦\(c)¦\(source)¦\(pinned)¦\(branch)"
             case .child(let r):
                 let isFirst = i == 0 || items[i - 1].isHeader
                 let isLast = i == items.count - 1 || items[i + 1].isHeader

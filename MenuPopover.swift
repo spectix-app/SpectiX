@@ -10,8 +10,8 @@ import Cocoa
 // (design/menu-popover-scheme6.html variant A): one icon+label entry per
 // main-window tab (MainTab, same order), each deep-linking to that tab,
 // with the permission-fix entry appearing on the far left only when access is
-// missing. Refresh / quit moved
-// up to mini glass buttons in the header's top-right.
+// missing, and the quick-actions wrench on the far right (QuickActions.swift).
+// Refresh / quit moved up to mini glass buttons in the header's top-right.
 final class MenuPopoverController: NSViewController {
 
     private let model: ListModel
@@ -23,6 +23,8 @@ final class MenuPopoverController: NSViewController {
     private var warnButton: TabItemButton!   // permission fix (far left, warn)
     private var entryButtons: [TabItemButton] = []
     private let entries = NSStackView()
+    private let toolButton = QuickActionsButton()
+    private let drawer = QuickActionsDrawer()
 
     var onJump: ((SessionRow) -> Void)?
     var onOpenTab: ((MainTab) -> Void)?
@@ -109,7 +111,12 @@ final class MenuPopoverController: NSViewController {
         entries.distribution = .fillProportionally
         entries.spacing = 4
 
-        let footer = NSStackView(views: [warnButton, entries])
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        toolButton.onClick = { [weak self] in self?.toggleDrawer() }
+
+        let footer = NSStackView(views: [warnButton, entries, divider, toolButton])
         footer.orientation = .horizontal
         footer.spacing = 4
         footer.distribution = .fill
@@ -117,6 +124,10 @@ final class MenuPopoverController: NSViewController {
         entries.setContentHuggingPriority(.defaultLow, for: .horizontal)
         footer.translatesAutoresizingMaskIntoConstraints = false
         glass.addSubview(footer)
+
+        // Quick-actions drawer floats over the bottom of the list, just above the footer.
+        drawer.isHidden = true
+        glass.addSubview(drawer)
 
         NSLayoutConstraint.activate([
             base.topAnchor.constraint(equalTo: container.topAnchor),
@@ -153,6 +164,10 @@ final class MenuPopoverController: NSViewController {
             footer.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -10),
             footer.topAnchor.constraint(equalTo: hiddenBar.bottomAnchor, constant: 6),
             footer.bottomAnchor.constraint(equalTo: glass.bottomAnchor, constant: -8),
+
+            drawer.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 8),
+            drawer.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -8),
+            drawer.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -4),
         ])
 
         // Resize grip: a small drag handle pinned to the bottom-right corner, on
@@ -208,7 +223,18 @@ final class MenuPopoverController: NSViewController {
 
     // Called just before the popover is shown: let the list scroll the active session
     // into view once on open, then hand scrolling back to the user for this showing.
-    func prepareForShow() { listView.resetScrollFollow() }
+    func prepareForShow() {
+        listView.resetScrollFollow()
+        setDrawer(open: false)
+    }
+
+    private func toggleDrawer() { setDrawer(open: drawer.isHidden) }
+
+    private func setDrawer(open: Bool) {
+        if open { drawer.prepareForShow() }
+        drawer.isHidden = !open
+        toolButton.isOpen = open
+    }
 
     // A terminal was focused → reveal + highlight its session in the popover list.
     // The caller (AppController) gates this on the popover actually being shown.

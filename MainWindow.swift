@@ -772,6 +772,7 @@ final class MainWindowController: NSWindowController {
     // the popover's.
     private let statsHeader = HeaderStatsView()
     private let tabBar = BottomTabBar()
+    private let actionsDrawer = QuickActionsDrawer()
     private let recentPane = RecentProjectsPane()   // tab 3
     private let statsPane = StatsPane()             // tab 2
     private let skillsPane = SkillsPane()           // tab 4
@@ -1060,6 +1061,22 @@ final class MainWindowController: NSWindowController {
             tabBar.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             tabBar.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
         ])
+
+        // Quick-actions drawer: floats over the pane, just above the tab bar.
+        actionsDrawer.isHidden = true
+        glass.addSubview(actionsDrawer)
+        NSLayoutConstraint.activate([
+            actionsDrawer.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -8),
+            actionsDrawer.widthAnchor.constraint(equalToConstant: 368),
+            actionsDrawer.bottomAnchor.constraint(equalTo: tabBar.topAnchor, constant: -4),
+        ])
+        tabBar.toolButton.onClick = { [weak self] in
+            guard let self else { return }
+            let open = self.actionsDrawer.isHidden
+            if open { self.actionsDrawer.prepareForShow() }
+            self.actionsDrawer.isHidden = !open
+            self.tabBar.toolButton.isOpen = open
+        }
     }
 
     // AppKit parks the traffic lights ~7pt from the left edge — closer in than
