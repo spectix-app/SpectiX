@@ -9,7 +9,6 @@ enum CatalogOrigin: Equatable {
     case project(String)
     case system
     case builtin
-    case missing
 }
 
 struct CatalogItem {
@@ -91,10 +90,12 @@ enum SkillCatalog {
                 if let d = date, d > (items[i].lastUsed ?? .distantPast) { items[i].lastUsed = d }
                 continue
             }
+            // Used but no longer installed: dropped (user, 2026-10-25).
+            guard builtins.contains(k) else { continue }
             let parts = k.split(separator: ".", maxSplits: 2).map(String.init)
             guard parts.count == 3, let tool = CatalogTool(rawValue: parts[0]), let kind = CatalogKind(rawValue: parts[1]) else { continue }
             items.append(CatalogItem(tool: tool, kind: kind, name: parts[2], description: "", path: nil,
-                                     origin: builtins.contains(k) ? .builtin : .missing, model: nil,
+                                     origin: .builtin, model: nil,
                                      uses: s.n, lastUsed: date))
         }
 

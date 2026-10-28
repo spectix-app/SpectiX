@@ -37,6 +37,19 @@ extension NSView {
     }
 }
 
+// MARK: - Done tick
+
+/// The app's one "done / confirmed" checkmark. Every green tick draws from here.
+enum DoneTick {
+    static func image(pointSize: CGFloat, weight: NSFont.Weight = .bold,
+                      color: NSColor? = nil, label: String? = nil) -> NSImage? {
+        var config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+        if let color { config = config.applying(.init(paletteColors: [color])) }
+        return NSImage(systemSymbolName: "checkmark", accessibilityDescription: label)?
+            .withSymbolConfiguration(config)
+    }
+}
+
 // MARK: - StatusDot
 //
 // A filled dot that casts a soft colored glow (a same-color layer shadow), plus a
@@ -466,7 +479,23 @@ final class StatusDot: NSView {
             p.timingFunction = CAMediaTimingFunction(name: .easeOut)
             core.add(p, forKey: "pop")
         }
-        guard check else { return }
+        guard check else {
+            // Compact: the app's done tick in place of the dot, so done reads apart
+            // from the other small dots beside it.
+            core.backgroundColor = NSColor.clear.cgColor
+            core.shadowOpacity = 0
+            let scale = window?.backingScaleFactor ?? 2
+            guard let img = DoneTick.image(pointSize: bounds.height + 1, weight: .black,
+                                           color: Status.accent("done")) else { return }
+            let mark = CALayer()
+            mark.name = "check"
+            mark.frame = bounds
+            mark.contentsGravity = .center
+            mark.contentsScale = scale
+            mark.contents = img.layerContents(forContentsScale: scale)
+            layer?.addSublayer(mark)
+            return
+        }
 
         // White checkmark over the green core. Points are in the dot's y-up layer
         // space: down to the low vertex, then up to the tall right arm.
@@ -4640,8 +4669,7 @@ private final class AccountRow: NSView {
         // it — the earlier leading-tick column shoved every address 16pt in.
         if isCurrent {
             let tick = NSImageView()
-            tick.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
+            tick.image = DoneTick.image(pointSize: 9)
             tick.contentTintColor = Status.usageGreen
             tick.translatesAutoresizingMaskIntoConstraints = false
             addSubview(tick)
@@ -4837,8 +4865,7 @@ private final class CopyCommandButton: NSButton {
         onCopy()
         // The only feedback available without a toast in this overlay: the glyph
         // confirms, then goes back so a second copy still looks like a fresh action.
-        image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
+        image = DoneTick.image(pointSize: 10)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))

@@ -29,6 +29,43 @@ enum Demo {
 
     static var enabled: Bool { AppSettings.demoMode }
 
+    // MARK: Quick actions
+
+    /// The drawer reads this file instead of ~/.claude/spectix/actions.json while the demo is on.
+    static var actionsPath: String {
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("spectix-demo-actions.json")
+        if !FileManager.default.fileExists(atPath: path) {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+            try? enc.encode(demoActions).write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
+        return path
+    }
+
+    private static let demoActions: [QuickAction] = [
+        QuickAction(id: "standup", emoji: "☀️", name: "Morning brief", kind: .skill, body: "/morning"),
+        QuickAction(id: "tests", emoji: "🧪", name: "Run tests", kind: .script, body: "yarn test"),
+        QuickAction(id: "review", emoji: "🔍", name: "Review my diff", kind: .skill, body: "/code-review"),
+        QuickAction(id: "preview", emoji: "🚀", name: "Deploy preview", kind: .script, body: "yarn deploy:preview"),
+        QuickAction(id: "branches", emoji: "🧹", name: "Prune branches", kind: .script,
+                    body: "git branch --merged main | grep -v main | xargs git branch -d"),
+        QuickAction(id: "notes", emoji: "📝", name: "Release notes", kind: .prompt,
+                    body: "Draft release notes from the commits since the last tag"),
+        QuickAction(id: "deps", emoji: "📦", name: "Update deps", kind: .prompt,
+                    body: "Bump minor versions in package.json and run the tests", inTerminal: true),
+        QuickAction(id: "simulator", emoji: "📱", name: "Reset simulator", kind: .script,
+                    body: "xcrun simctl erase all"),
+    ]
+
+    static func actionOutput(_ key: String) -> String {
+        switch key {
+        case "tests":   return "142 passed, 0 failed (6.8s)"
+        case "standup": return "3 PRs merged yesterday, 2 reviews waiting on you."
+        case "review":  return "No blocking issues. 2 suggestions in src/api/session.ts."
+        default:        return "Done."
+        }
+    }
+
     // MARK: Clock
 
     private static var t0 = Date().timeIntervalSince1970
@@ -811,7 +848,7 @@ extension Demo {
             let dir = tool == .claude ? "~/.claude" : (kind == .skill ? "~/.agents" : "~/.codex")
             let path: String?
             switch origin {
-            case .builtin, .missing: path = nil
+            case .builtin: path = nil
             default: path = kind == .skill ? "\(dir)/skills/\(name)/SKILL.md"
                                            : "\(dir)/agents/\(name).\(tool == .claude ? "md" : "toml")"
             }

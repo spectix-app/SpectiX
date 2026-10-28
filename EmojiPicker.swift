@@ -361,6 +361,8 @@ final class EmojiIconPicker: NSViewController {
     var onPick: ((String) -> Void)?
     var onUpload: (() -> Void)?
     var onRemove: (() -> Void)?
+    var allowsUpload = true
+    var removeTitle = L("移除自定义", "Remove")
 
     static let contentSize = NSSize(width: 300, height: 384)
     private var contentW: CGFloat { Self.contentSize.width }
@@ -435,9 +437,10 @@ final class EmojiIconPicker: NSViewController {
         let upload = makeFooterButton(L("🖼 上传", "🖼 Upload"), #selector(uploadTapped))
         upload.frame = NSRect(x: 100, y: contentH - 38, width: 84, height: 28)
         upload.autoresizingMask = [.minYMargin]
+        upload.isHidden = !allowsUpload
         root.addSubview(upload)
 
-        let remove = makeFooterButton(L("移除自定义", "Remove"), #selector(removeTapped))
+        let remove = makeFooterButton(removeTitle, #selector(removeTapped))
         remove.contentTintColor = NSColor.systemRed
         remove.sizeToFit()
         let rw = max(remove.frame.width + 22, 92)
@@ -541,11 +544,14 @@ extension EmojiIconPicker {
     // coords). Clamps onto the screen that contains the anchor.
     static func present(anchorScreenRect: NSRect,
                         onPick: @escaping (String) -> Void,
-                        onUpload: @escaping () -> Void,
-                        onRemove: @escaping () -> Void) {
+                        onUpload: (() -> Void)?,
+                        onRemove: @escaping () -> Void,
+                        removeTitle: String? = nil) {
         dismiss()
 
         let picker = EmojiIconPicker()
+        picker.allowsUpload = onUpload != nil
+        if let t = removeTitle { picker.removeTitle = t }
         let size = contentSize
 
         // Frosted rounded container hosting the picker's view.
@@ -589,7 +595,7 @@ extension EmojiIconPicker {
         // Close BEFORE the file dialog opens: this panel dismisses itself on any
         // mouse-down outside it, so leaving it up under a modal open panel would just
         // make it vanish on the first click in there.
-        picker.onUpload = { dismiss(); onUpload() }
+        picker.onUpload = { dismiss(); onUpload?() }
         picker.onRemove = { onRemove(); dismiss() }
 
         activePanel = panel

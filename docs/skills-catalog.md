@@ -35,9 +35,9 @@
 · **项目 skill**：`<root>/.agents/skills/*/SKILL.md`  
 · **agent**：`~/.codex/agents/*.toml`，只读顶层 `name` / `description` / `model`。`tomlTopLevel` 会跳过 `"""` / `'''` 多行串 —— agent 的指令正文里常有 `name = ...` 这种行，不跳就会把正文读成 key；遇到第一个 `[表头]` 就停
 
-### 内置项与「已删除」
+### 内置项（已删除的不显示）
 
-`builtinClaudeSkills`（12 个，如 `update-config` `run` `code-review` `loop`）和 `builtinClaudeAgents`（`general-purpose` `Explore` `Plan` `claude-code-guide` `statusline-setup` `fork`）没有定义文件。它们**只在有使用次数时**才出现，origin `.builtin`。记录里有次数、但目录里找不到的名字（如已删掉的 `autorun-loop`）也照样出一行，origin `.missing`，简介和路径为空。
+`builtinClaudeSkills`（12 个，如 `update-config` `run` `code-review` `loop`）和 `builtinClaudeAgents`（`general-purpose` `Explore` `Plan` `claude-code-guide` `statusline-setup` `fork`）没有定义文件。它们**只在有使用次数时**才出现，origin `.builtin`。记录里有次数、但目录里找不到的名字（如已删掉的 `autorun-loop`）**不显示**（2026-10-25 用户定：删掉了就不显示）。以前它们出一行标「已删除」，`.missing` 这个 origin 已随之删掉。
 
 ### 次数挂到哪一条
 
@@ -113,15 +113,16 @@ swiftc -O SkillCatalog.swift SkillUsage.swift tools/skill-usage-probe/main.swift
 · **gamedev 插件前缀未验证**：它没有 `plugin.json`，前缀退回插件名；这个前缀和使用记录里的名字对不对得上，没核对过：未验证  
 · 同名的项目 skill 副本永远 0 次（见「次数挂到哪一条」）  
 · Claude 没有等到 `tool_result` 的 agent 调用算作使用 —— 被杀掉的会话里那次启动其实可能被拒过  
-· 目录里的内置 skill / agent 名单是手写死的，Claude Code 新增内置项要来改 `builtinClaudeSkills` / `builtinClaudeAgents`，否则它们显示为 `.missing`
+· 目录里的内置 skill / agent 名单是手写死的，Claude Code 新增内置项要来改 `builtinClaudeSkills` / `builtinClaudeAgents`，否则它们整行消失（被当成已删除）
 
 ## 界面（`SkillsPane.swift`）
 
 · 主窗口第 4 个 tab「技能 / Skills」（⌘4，设置挪到 ⌘5），`design/skills-agents-tab.html` 方案 2：排行榜式列表，每行背后一条蓝条，长度 = 次数 ÷ 当前可见列表里的最大次数；按次数排序时带名次，0 次的行半透明  
-· 分段（Skills / Agents）、筛选胶囊（全部 / Claude / Codex）、排序按钮都在滚动区**外面**，列表滚动时它们不动 —— 这是用户点名要的，别把它们挪进 `listStack`  
+· 分段（Skills / Agents）、搜索框、筛选胶囊（全部 / Claude / Codex）、排序按钮都在滚动区**外面**，列表滚动时它们不动 —— 这是用户点名要的，别把它们挪进 `listStack`  
 · 项目根 = `ProjectHistory.all()` 的路径；每次切进 tab 调一次 `SkillCatalog.load`（`loading` 防重入），演示模式下直接用 `Demo.catalog()`，不读任何真文件  
 · 列表只在加载完成或用户操作（切分段 / 筛选 / 排序 / 展开）时重建，**不许挂定时器刷新**：每次插入控件 AppKit 都会登记一份不释放的依赖（见 design-system.md 的 T318 那段）  
-· 展开的详情：简介 · 使用次数与最近时间 · 来源 · 模型（只有 agent 有）· 位置，以及「在 Finder 中显示 / 打开文件 / 复制名字」三个按钮；没有文件的内置 / 已删除项不给按钮  
+· 搜索框：按空格拆词，每个词都要出现在名字或简介里（不分大小写），在当前分段和筛选内再筛；**不开 `sendsSearchStringImmediately`** —— 每次搜索都整表重建行，逐键触发就是逐键漏（T318），默认的「停顿后才发」够用  
+· 展开的详情：简介 · 使用次数与最近时间 · 来源 · 模型（只有 agent 有）· 位置，以及「在 Finder 中显示 / 打开文件 / 复制名字」三个按钮；没有文件的内置项不给按钮  
 · 看效果：`./tools/skills-preview.sh`（真实目录 + 演示数据 × 两个主题 × 深浅色 × 384 / 476 两个宽度，出 PNG 到 `/tmp/spectix-skills`）
 
 ## 零联网

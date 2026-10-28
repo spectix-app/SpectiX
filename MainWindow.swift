@@ -1069,6 +1069,7 @@ final class MainWindowController: NSWindowController {
             actionsDrawer.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -8),
             actionsDrawer.widthAnchor.constraint(equalToConstant: 368),
             actionsDrawer.bottomAnchor.constraint(equalTo: tabBar.topAnchor, constant: -4),
+            actionsDrawer.topAnchor.constraint(greaterThanOrEqualTo: glass.topAnchor, constant: 8),
         ])
         tabBar.toolButton.onClick = { [weak self] in
             guard let self else { return }
@@ -1271,12 +1272,87 @@ extension MainWindowController: NSWindowDelegate {
 // on the right (●2 ●1 ●1) so the whole window's state reads at a glance.
 // Click → raise the folder's window.
 
+// Git branch chip after the project name. Each branch gets a stable color from its
+// name so several worktrees of one repo read apart at a glance; main/master stay quiet.
+final class BranchPill: NSView {
+    private static let hexes: [Int] = [0xe5484d, 0xf76b15, 0xe2a300, 0x30a46c,
+                                       0x12a594, 0x0090ff, 0x6e56cf, 0xd6409f]
+    private static let palette: [NSColor] = hexes.map { (h: Int) -> NSColor in
+        let r = CGFloat((h >> 16) & 0xff) / 255
+        let g = CGFloat((h >> 8) & 0xff) / 255
+        let b = CGFloat(h & 0xff) / 255
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+    }
+    private static let darkTextIndex = 2   // amber: white text is unreadable on it
+
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private var leadPad: NSLayoutConstraint!
+    private var trailPad: NSLayoutConstraint!
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        icon.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow + 10, for: .horizontal)
+        addSubview(icon)
+        addSubview(label)
+        leadPad = icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7)
+        trailPad = trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 20),
+            widthAnchor.constraint(lessThanOrEqualToConstant: 170),
+            leadPad, trailPad,
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(branch: String) {
+        if branch == "main" || branch == "master" {
+            layer?.backgroundColor = nil
+            leadPad.constant = 0
+            trailPad.constant = 0
+            label.font = Theme.rounded(12, .semibold)
+            label.textColor = .labelColor
+            icon.contentTintColor = .labelColor
+            label.stringValue = branch
+            return
+        }
+        let i = Int(Self.hash(branch) % UInt32(Self.palette.count))
+        let fg: NSColor = i == Self.darkTextIndex ? NSColor(white: 0.11, alpha: 1) : .white
+        layer?.backgroundColor = Self.palette[i].cgColor
+        leadPad.constant = 7
+        trailPad.constant = 9
+        label.font = Theme.rounded(12, .bold)
+        label.textColor = fg
+        icon.contentTintColor = fg
+        label.stringValue = branch.replacingOccurrences(of: #"^(task|feat|feature|fix|chore|wt)/"#,
+                                                        with: "", options: .regularExpression)
+    }
+
+    // djb2 — String.hashValue is reseeded every launch, so a branch would change color.
+    private static func hash(_ s: String) -> UInt32 {
+        s.unicodeScalars.reduce(5381 as UInt32) { ($0 &* 33) ^ $1.value }
+    }
+}
+
 final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
     private let card = GroupCard(radius: Theme.group)   // the project enclosure's top / solo slice
     private let logoBadge = LogoBadge()      // gradient source monogram; doubles as the drag grip
     private let disc = DiscButton()          // round collapse toggle (replaces the bare chevron glyph)
     private let folderLabel = NSTextField(labelWithString: "")
     private let countPill = CountPill()      // one glass chip holding every status bucket
+    private let branchPill = BranchPill()
+    private let titleStack = NSStackView()   // folder + branch; a hidden pill drops out of layout
     // The 8pt above the card is the ONLY separation between projects. The FIRST
     // group drops it (0): the host puts the same 8 outside the scroll view, between
     // the stats header and the list, so that gap stays put while the rows scroll
@@ -1324,7 +1400,14 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
         folderLabel.textColor = .labelColor
         folderLabel.lineBreakMode = .byTruncatingTail
         folderLabel.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(folderLabel)
+        folderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleStack.orientation = .horizontal
+        titleStack.spacing = 8
+        titleStack.distribution = .fill
+        titleStack.translatesAutoresizingMaskIntoConstraints = false
+        titleStack.addArrangedSubview(folderLabel)
+        titleStack.addArrangedSubview(branchPill)
+        card.addSubview(titleStack)
 
         card.addSubview(countPill)
 
@@ -1340,9 +1423,9 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
             logoBadge.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 11),
             logoBadge.centerYAnchor.constraint(equalTo: card.centerYAnchor),
 
-            folderLabel.leadingAnchor.constraint(equalTo: logoBadge.trailingAnchor, constant: 10),
-            folderLabel.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-            folderLabel.trailingAnchor.constraint(lessThanOrEqualTo: countPill.leadingAnchor, constant: -8),
+            titleStack.leadingAnchor.constraint(equalTo: logoBadge.trailingAnchor, constant: 10),
+            titleStack.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: countPill.leadingAnchor, constant: -8),
 
             countPill.trailingAnchor.constraint(equalTo: disc.leadingAnchor, constant: -9),
             countPill.centerYAnchor.constraint(equalTo: card.centerYAnchor),
@@ -1382,18 +1465,12 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
         topGap.constant = isFirst ? 0 : 8
         // A pinned project floats to the top; mark its header with a leading 📌 so the
         // reason it's parked up here is obvious. Zero extra layout — rides the label.
-        let title = pinned ? "📌 " + folder : folder
+        folderLabel.stringValue = pinned ? "📌 " + folder : folder
         if case .project(let cwd) = kind, AppSettings.showsBranch(cwd: cwd), let branch = GitBranch.current(cwd: cwd) {
-            let para = NSMutableParagraphStyle()
-            para.lineBreakMode = .byTruncatingTail
-            let text = NSMutableAttributedString(string: title, attributes: [
-                .font: folderLabel.font as Any, .foregroundColor: NSColor.labelColor, .paragraphStyle: para])
-            text.append(NSAttributedString(string: "  ⎇ " + branch, attributes: [
-                .font: Theme.rounded(12, .medium), .foregroundColor: NSColor.secondaryLabelColor,
-                .paragraphStyle: para]))
-            folderLabel.attributedStringValue = text
+            branchPill.configure(branch: branch)
+            branchPill.isHidden = false
         } else {
-            folderLabel.stringValue = title
+            branchPill.isHidden = true
         }
         // A project whose VSCode window is open but holds no session arrives as a single
         // zero bucket (ListModel.projectItems) — the only way counts carries a 0, since

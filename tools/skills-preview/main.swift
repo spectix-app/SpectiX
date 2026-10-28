@@ -5,9 +5,9 @@ import Cocoa
 // this — a long name shoving the count off the edge, a bar drawn at the wrong length,
 // a tag unreadable in light mode — compiles, runs and passes every test.
 //
-// Each sheet is four columns of the REAL SkillsPane plus the real 5-tab BottomTabBar
+// Each sheet is five columns of the REAL SkillsPane plus the real 5-tab BottomTabBar
 // under each: real catalog (skills by uses, top row expanded) · real agents · real
-// Codex skills by name · the demo catalog by recent. Compare against
+// Codex skills by name · the demo catalog by recent · real skills searched for "task". Compare against
 // design/skills-agents-tab.html 方案 2.
 //
 // Same blind spots as row-preview: no NSVisualEffectView blur (the bed is Theme.baseFill)
@@ -23,12 +23,13 @@ while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
 let demo = Demo.catalog()
 print("real catalog: \(real.count) items · demo: \(demo.count)")
 
-struct Shot { let label: String; let items: [CatalogItem]; let kind: CatalogKind; let tool: CatalogTool?; let sort: SkillSort; let expandTop: Bool }
+struct Shot { let label: String; let items: [CatalogItem]; let kind: CatalogKind; let tool: CatalogTool?; let sort: SkillSort; let expandTop: Bool; var query = "" }
 let shots = [
     Shot(label: "skills · all · uses · top expanded", items: real, kind: .skill, tool: nil, sort: .uses, expandTop: true),
     Shot(label: "agents · all · uses", items: real, kind: .agent, tool: nil, sort: .uses, expandTop: false),
     Shot(label: "skills · codex · name", items: real, kind: .skill, tool: .codex, sort: .name, expandTop: false),
     Shot(label: "demo · skills · recent · expanded", items: demo, kind: .skill, tool: nil, sort: .recent, expandTop: true),
+    Shot(label: "skills · search \"task\"", items: real, kind: .skill, tool: nil, sort: .uses, expandTop: false, query: "task"),
 ]
 
 func render(_ shot: Shot, look: NSAppearance, width: CGFloat) -> NSBitmapImageRep? {
@@ -55,7 +56,7 @@ func render(_ shot: Shot, look: NSAppearance, width: CGFloat) -> NSBitmapImageRe
     case .name:   top = nil
     }
     pane.configure(kind: shot.kind, tool: shot.tool, sort: shot.sort,
-                   expanded: shot.expandTop ? Set([top?.id].compactMap { $0 }) : [])
+                   expanded: shot.expandTop ? Set([top?.id].compactMap { $0 }) : [], query: shot.query)
 
     let bar = BottomTabBar()
     bar.translatesAutoresizingMaskIntoConstraints = true

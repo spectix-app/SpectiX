@@ -21,9 +21,8 @@ import Cocoa
 // usually never. `tools/menubar-leak-probe.sh` is the check — nothing else can see
 // this regression, it compiles and runs and merely eats memory for days.
 //
-// Look — the capsule's style (glass bed, Status.accent dots and figures, the hollow
-// `await` ring) is documented in docs/design-system.md; it is deliberately identical
-// to what the image renderer drew, this change is about how it gets on screen.
+// Look — the capsule's style (opaque black/white bed, contrasted dots and figures, the
+// hollow `await` ring) is documented in docs/design-system.md.
 
 /// One "● n" segment of the capsule.
 struct MenuSeg: Equatable {
@@ -43,6 +42,7 @@ final class MenuCapsuleView: NSView {
 
     /// The breathing dot. A layer rather than a redrawn frame — see the header.
     private let pulseDot = CALayer()
+    private var pulseFloor: Double = 0
     private var paletteObserver: NSObjectProtocol?
 
     private(set) var segs: [MenuSeg] = []
@@ -118,12 +118,31 @@ final class MenuCapsuleView: NSView {
         guard s.drawNum else { return nil }
         return NSAttributedString(string: "\(s.count)", attributes: [
             .font: Theme.roundedMono(11, .bold),
-            .foregroundColor: Status.accent(s.status),
+            .foregroundColor: ink(s.status),
         ])
     }
 
     private var isDark: Bool {
         (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) ?? .aqua) == .darkAqua
+    }
+
+    // Opaque bed so the wallpaper never enters the contrast math: black on a dark
+    // bar, white on a light one.
+    private var bed: NSColor { isDark ? NSColor(white: 0.03, alpha: 1) : .white }
+
+    /// Dot + figure color, held to 4.5:1 against the bed. Dark: the saturated accents
+    /// (idle lifted to silver). Light: the theme's deepened fills, tuned for white.
+    private func ink(_ status: String) -> NSColor {
+        let dark = isDark
+        let base: NSColor = !dark ? Status.fill(status)
+            : status == "idle" ? Status.accent(status).blended(withFraction: 0.6, of: .white) ?? .white
+            : Status.accent(status)
+        // contrastedForTintedBed is dynamic; resolve it under the bed's own appearance.
+        var out = base
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            out = base.contrastedForTintedBed(bed).usingColorSpace(.sRGB) ?? base
+        }
+        return out
     }
 
     /// Left edge of the capsule inside the (wider, system-padded) button.
@@ -143,12 +162,8 @@ final class MenuCapsuleView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // The bed is a NEAR-TRANSPARENT wash, so the translucent menu bar (and the
-        // wallpaper behind it) shows through — the chosen look, see docs/design-system.md
-        // (T167 tried an opaque white bed and it was reverted 2026-08-09).
-        let dark = isDark
-        let bed    = dark ? NSColor(white: 1, alpha: 0.14) : NSColor(white: 0, alpha: 0.06)
-        let stroke = dark ? NSColor(white: 1, alpha: 0.15) : NSColor(white: 0, alpha: 0.10)
+        let bed = self.bed
+        let stroke = isDark ? NSColor(white: 1, alpha: 0.16) : NSColor(white: 0, alpha: 0.12)
 
         let capRect = NSRect(x: originX + 0.5, y: (bounds.height - capH) / 2,
                              width: width(for: segs) - 1, height: capH)
@@ -160,7 +175,7 @@ final class MenuCapsuleView: NSView {
         let xs = dotOrigins()
         for (i, s) in segs.enumerated() {
             let x = xs[i]
-            let color = Status.accent(s.status)
+            let color = ink(s.status)
             // The breathing dot is the layer above; leave its slot empty so the two
             // never double-paint.
             if !s.pulse {
@@ -172,6 +187,13 @@ final class MenuCapsuleView: NSView {
                     ring.lineWidth = 1.5
                     color.setStroke()
                     ring.stroke()
+                } else if s.status == "done" {
+                    // The app's done tick instead of a dot, so done reads apart from await/working.
+                    if let tick = DoneTick.image(pointSize: 7, weight: .black, color: color) {
+                        let sz = tick.size
+                        tick.draw(in: NSRect(x: x + dotD / 2 - sz.width / 2, y: midY - sz.height / 2,
+                                             width: sz.width, height: sz.height))
+                    }
                 } else {
                     NSBezierPath(ovalIn: oval).fill()
                 }
@@ -188,7 +210,7 @@ final class MenuCapsuleView: NSView {
     /// Park the breathing dot over its slot and (re)start its loop.
     ///
     /// It breathes exactly like the list's compact dots (Components `buildBreath`):
-    /// scale 0.5→1 and alpha 0.45→1 on a 1.4s ease-in-out swing that auto-reverses.
+    /// scale 0.5→1 and alpha 0.45→1 (0.75 on the white bed) on a 1.4s ease-in-out swing that auto-reverses.
     /// `beginTime` is Motion.epoch — the origin every CALayer loop in the app anchors
     /// to — so the menu bar inhales in unison with the dropdown instead of drifting.
     private func layoutPulse() {
@@ -202,13 +224,17 @@ final class MenuCapsuleView: NSView {
         CATransaction.setDisableActions(true)   // no implicit move/fade on a reposition
         pulseDot.isHidden = false
         pulseDot.frame = NSRect(x: x, y: bounds.height / 2 - dotD / 2, width: dotD, height: dotD)
-        pulseDot.backgroundColor = Status.accent(segs[idx].status).cgColor
+        pulseDot.backgroundColor = ink(segs[idx].status).cgColor
         CATransaction.commit()
 
         // Re-adding an identical epoch-anchored loop would rejoin the same phase, but
         // it still costs a layer transaction on every counts change; leave a running
         // loop alone.
-        guard pulseDot.animation(forKey: "breath") == nil else { return }
+        // A dark dot fading on white washes out instead of dimming, so the white bed
+        // breathes from a higher floor.
+        let floor = isDark ? 0.45 : 0.75
+        guard pulseDot.animation(forKey: "breath") == nil || floor != pulseFloor else { return }
+        pulseFloor = floor
 
         let g = CAAnimationGroup()
         g.duration = 1.4
@@ -220,7 +246,7 @@ final class MenuCapsuleView: NSView {
         let scale = CABasicAnimation(keyPath: "transform.scale")
         scale.fromValue = 0.5; scale.toValue = 1.0
         let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0.45; fade.toValue = 1.0
+        fade.fromValue = floor; fade.toValue = 1.0
         g.animations = [scale, fade]
         pulseDot.add(g, forKey: "breath")
     }

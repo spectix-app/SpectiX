@@ -3242,9 +3242,7 @@ final class SettingsPane: NSView {
         return card
     }
 
-    private static let checkmark: NSImage? = NSImage(
-        systemSymbolName: "checkmark", accessibilityDescription: L("已授权", "Granted"))?
-        .withSymbolConfiguration(.init(pointSize: 13, weight: .bold))
+    private static let checkmark: NSImage? = DoneTick.image(pointSize: 13, label: L("已授权", "Granted"))
 
     private func refreshPermissionRows() {
         for row in permRows {

@@ -24,7 +24,6 @@ func originLabel(_ o: CatalogOrigin) -> String {
     case .project(let p): return "project(\(p))"
     case .system: return "system"
     case .builtin: return "builtin"
-    case .missing: return "missing"
     }
 }
 
@@ -55,8 +54,8 @@ for tool in [CatalogTool.claude, .codex] {
     }
 }
 
-print("\n== builtin / missing")
-for it in items where it.origin == .builtin || it.origin == .missing {
+print("\n== builtin")
+for it in items where it.origin == .builtin {
     print("\(it.tool.rawValue).\(it.kind.rawValue)\t\(it.name)\t\(it.uses)\t\(originLabel(it.origin))")
 }
 

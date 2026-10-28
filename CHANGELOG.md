@@ -2,6 +2,23 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.17 — Ask your AI to build quick actions for you (2026-10-27)
+
+Verified on Claude Code 2.1.311.
+
+### New
+
+- **Connect AI** — the quick-actions drawer now has a row of buttons for Claude Code, Codex and Cursor, showing only the ones installed on your Mac. Click one, open a new session, and you can say “add a SpectiX button that checks my disk space”: the AI adds, edits or removes tiles itself, and an open drawer shows the change within a few seconds. A green dot and “used N minutes ago” tell you it is working. It runs SpectiX itself as a local helper over standard input and output, so it opens no network connection, and the AI cannot run your actions, only manage them.
+- Adding or editing an action is now a page inside the drawer rather than a separate window, and a half-filled form is still there when you reopen the popover. Clicking a tile opens its details: the exact command, a live log and a running clock, with run and stop beside them.
+- Choosing the **Skill** type now gives you a searchable list of the Claude skills you have installed, most used first, instead of a blank box. Picking a project skill fills in its project folder for you.
+- The **Skills** tab has a search box that filters by name or description, and skills or agents you have deleted no longer linger in the list just because they were used once.
+- Each project header now shows its git branch as a coloured chip, with a stable colour per branch name, so several worktrees of the same repository read apart at a glance.
+
+### Fixed
+
+- The menu-bar counter sat on a see-through background, so on a busy wallpaper or a light menu bar the grey idle dot and the small coloured numbers could all but vanish. It now has a solid bed, black on a dark menu bar and white on a light one, and finished sessions show a tick instead of a green dot, so done no longer blurs into running and waiting.
+- An action with no folder set ran in your home folder, and starting Claude there made macOS ask for access to Downloads, Documents, Desktop and more, up to eight prompts in one go. Actions now run in a folder of SpectiX’s own unless you choose another, and the editor warns you if you pick your home folder.
+
 ## 1.16 — Run your own scripts and Claude skills from one click (2026-10-22)
 
 Verified on Claude Code 2.1.308.

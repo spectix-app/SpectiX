@@ -5433,6 +5433,8 @@ class AppController: NSObject, NSApplicationDelegate {
         // table doesn't also scroll; pass everything else through untouched.
         popoverKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.popover.isShown else { return event }
+            // Typing in a field (the quick-action form) keeps its own arrows and Return.
+            if event.window?.firstResponder is NSTextView { return event }
             switch event.keyCode {
             case 126: self.popoverController.selectPrevSession(); return nil   // ↑
             case 125: self.popoverController.selectNextSession(); return nil   // ↓
@@ -7441,6 +7443,9 @@ extension AppController: NSPopoverDelegate {
 }
 
 // MARK: - Entry point
+
+// An AI client started us as its MCP server: no app, no window, just stdin/stdout.
+if CommandLine.arguments.contains(QuickActionsMCP.flag) { QuickActionsMCP.run() }
 
 let app = NSApplication.shared
 // Carry a pre-rename install over before anything can read a setting — AppController

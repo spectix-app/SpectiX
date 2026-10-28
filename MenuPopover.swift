@@ -168,6 +168,7 @@ final class MenuPopoverController: NSViewController {
             drawer.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 8),
             drawer.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -8),
             drawer.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -4),
+            drawer.topAnchor.constraint(greaterThanOrEqualTo: glass.topAnchor, constant: 8),
         ])
 
         // Resize grip: a small drag handle pinned to the bottom-right corner, on

@@ -28,12 +28,14 @@ final class SkillsPane: NSView {
     private var tool: CatalogTool?            // nil = both
     private var sort: SkillSort = .uses
     private var expanded: Set<String> = []
+    private var query = ""
     private var loading = false
 
     private var skillsSeg: TabItemButton!
     private var agentsSeg: TabItemButton!
     private var chips: [(CatalogTool?, ChipButton)] = []
     private let sortButton = ChipButton(title: "")
+    private let searchField = NSSearchField()
     private let summary = NSTextField(labelWithString: "")
     private let listStack = NSStackView()
     private let scroll = NSScrollView()
@@ -61,6 +63,15 @@ final class SkillsPane: NSView {
         seg.spacing = 4
         seg.translatesAutoresizingMaskIntoConstraints = false
         addSubview(seg)
+
+        searchField.placeholderString = L("搜索名字或简介", "Search name or description")
+        searchField.font = Theme.font(12)
+        searchField.focusRingType = .none
+        searchField.target = self
+        searchField.action = #selector(searchChanged)
+        // Not sendsSearchStringImmediately: each keystroke would rebuild every row (T318).
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(searchField)
 
         let chipRow = NSStackView()
         chipRow.orientation = .horizontal
@@ -114,7 +125,11 @@ final class SkillsPane: NSView {
             seg.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.pad),
             seg.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.pad),
 
-            chipRow.topAnchor.constraint(equalTo: seg.bottomAnchor, constant: 8),
+            searchField.topAnchor.constraint(equalTo: seg.bottomAnchor, constant: 8),
+            searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.pad),
+            searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.pad),
+
+            chipRow.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             chipRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.pad),
 
             sortButton.centerYAnchor.constraint(equalTo: chipRow.centerYAnchor),
@@ -167,14 +182,23 @@ final class SkillsPane: NSView {
         rebuild()
     }
 
-    func configure(kind: CatalogKind, tool: CatalogTool?, sort: SkillSort, expanded: Set<String>) {
-        self.kind = kind; self.tool = tool; self.sort = sort; self.expanded = expanded
+    func configure(kind: CatalogKind, tool: CatalogTool?, sort: SkillSort, expanded: Set<String>, query: String = "") {
+        self.kind = kind; self.tool = tool; self.sort = sort; self.expanded = expanded; self.query = query
+        searchField.stringValue = query
         syncControls()
         rebuild()
     }
 
     private func visible() -> [CatalogItem] {
-        let l = items.filter { $0.kind == kind && (tool == nil || $0.tool == tool) }
+        let terms = query.split(separator: " ").map(String.init)
+        let l = items.filter { item in
+            item.kind == kind && (tool == nil || item.tool == tool)
+                && terms.allSatisfy { t in
+                    [item.name, item.description].contains {
+                        $0.range(of: t, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                    }
+                }
+        }
         switch sort {
         case .uses:
             return l.sorted { $0.uses != $1.uses ? $0.uses > $1.uses : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -205,7 +229,9 @@ final class SkillsPane: NSView {
                 ? L("正在读取对话记录…第一次要几秒钟", "Reading transcripts… the first time takes a few seconds")
                 : L("没有找到 skill 或 agent", "No skills or agents found")
         } else {
-            emptyLabel.stringValue = L("这一类下没有内容", "Nothing in this filter")
+            emptyLabel.stringValue = query.isEmpty
+                ? L("这一类下没有内容", "Nothing in this filter")
+                : L("没有匹配「\(query)」的", "Nothing matches “\(query)”")
         }
         emptyLabel.isHidden = !list.isEmpty
 
@@ -241,6 +267,14 @@ final class SkillsPane: NSView {
         guard k != kind else { return }
         kind = k
         syncControls()
+        scroll.contentView.scroll(to: .zero)
+        rebuild()
+    }
+
+    @objc private func searchChanged() {
+        let q = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard q != query else { return }
+        query = q
         scroll.contentView.scroll(to: .zero)
         rebuild()
     }
@@ -375,7 +409,6 @@ private final class SkillRowView: NSView {
         case .project(let p): return L("项目 · \(p)", "Project · \(p)")
         case .system:         return L("系统", "System")
         case .builtin:        return L("内置", "Built-in")
-        case .missing:        return L("已删除", "Removed")
         }
     }
 
