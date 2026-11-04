@@ -2,6 +2,20 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.18 — Group the projects that make up one feature (2026-11-03)
+
+Verified on Claude Code 2.1.314.
+
+### New
+
+- **Project groups** — when one feature lives in several repositories, say a front end and two back ends, you can now keep them together. Drag a project’s icon onto another project’s header and hold it there for half a second: a ring fills around the target’s icon, and letting go makes a group. The group gets its own title row, its projects sit beneath it at full width, and a violet line down the left edge ties them together.
+- Drag more projects onto the group to add them, drop one between two members to reorder it, or drop it outside to take it out. Dragging the group’s violet icon moves the whole group. Right-click the title to rename or ungroup, and click it to fold the group down to a single summary line. Closed projects keep their place, so a group comes back as it was when you reopen them.
+- **Connect AI** now has its own page, opened from a button beside the quick-actions drawer title. Each installed AI gets one line with an explicit Connect or Disconnect button and when it last used SpectiX, followed by how to use it, things to say, how it works and what it will not do. Disconnecting removes SpectiX from that AI’s settings and leaves your buttons alone.
+
+### Fixed
+
+- The git branch chip on a project header stopped at a fixed width, so long branch names were cut short even when the header had plenty of room. It now uses all the free space in the header before it shortens the name.
+
 ## 1.17 — Ask your AI to build quick actions for you (2026-10-27)
 
 Verified on Claude Code 2.1.311.

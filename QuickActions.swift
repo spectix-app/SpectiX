@@ -489,7 +489,8 @@ final class QuickActionsDrawer: NSView {
     private let head = NSStackView()
     private let detail = QuickActionDetail()
     private let form = QuickActionForm()
-    private let aiRow = MCPConnectRow()
+    private let aiLink = NSButton(title: "", target: nil, action: nil)
+    private let aiPage = MCPConnectPage()
     private let formScroll = NSScrollView()
     static let columns = 3
 
@@ -525,8 +526,18 @@ final class QuickActionsDrawer: NSView {
         grid.spacing = 7
         grid.alignment = .leading
 
-        head.setViews([title, NSView(), editLink], in: .leading)
+        aiLink.isBordered = false
+        aiLink.target = self
+        aiLink.action = #selector(showAIPage)
+        aiLink.toolTip = L("让 Claude Code / Codex / Cursor 直接帮你建按钮", "Let Claude Code, Codex or Cursor build buttons for you")
+        setAILink(connected: false)
+        aiPage.row.onConnectedChange = { [weak self] in self?.setAILink(connected: $0) }
+        aiPage.onBack = { [weak self] in self?.showDetail(nil) }
+        aiPage.isHidden = true
+
+        head.setViews([title, aiLink, NSView(), editLink], in: .leading)
         head.orientation = .horizontal
+        head.setCustomSpacing(8, after: title)
         detail.isHidden = true
         detail.onBack = { [weak self] in self?.showDetail(nil) }
         detail.onEdit = { [weak self] in self?.showForm($0) }
@@ -536,7 +547,7 @@ final class QuickActionsDrawer: NSView {
         formScroll.hasVerticalScroller = true
         formScroll.autohidesScrollers = true
         formScroll.isHidden = true
-        let stack = NSStackView(views: [head, aiRow, note, grid, detail, formScroll])
+        let stack = NSStackView(views: [head, note, grid, detail, aiPage, formScroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -555,7 +566,7 @@ final class QuickActionsDrawer: NSView {
             head.widthAnchor.constraint(equalTo: stack.widthAnchor),
             grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
             note.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            aiRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            aiPage.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
             formScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             form.topAnchor.constraint(equalTo: formScroll.contentView.topAnchor),
@@ -582,7 +593,7 @@ final class QuickActionsDrawer: NSView {
     func prepareForShow() {
         QuickActionStore.shared.reloadIfChanged()
         QuickActionRunner.shared.acknowledge()
-        aiRow.start()
+        aiPage.row.start()
         if formScroll.isHidden { showDetail(nil) }   // a half-filled form survives the popover closing
         refreshTiles()   // "✓ 3m ago" only ticks while something runs
     }
@@ -606,8 +617,29 @@ final class QuickActionsDrawer: NSView {
         formScroll.isHidden = !showsForm
         grid.isHidden = showsDetail || showsForm
         head.isHidden = showsDetail || showsForm
-        aiRow.isHidden = showsDetail || showsForm
+        aiPage.isHidden = true
         onLayoutChange?()
+    }
+
+    @objc func showAIPage() {
+        show(detail: false, form: false)
+        grid.isHidden = true
+        head.isHidden = true
+        aiPage.isHidden = false
+        aiPage.row.start()   // its timer stops while hidden
+        onLayoutChange?()
+    }
+
+    private func setAILink(connected: Bool) {
+        let t = NSMutableAttributedString()
+        if connected {
+            t.append(NSAttributedString(string: "● ", attributes: [
+                .font: Theme.rounded(9, .bold), .foregroundColor: Status.accent("done")]))
+        }
+        t.append(NSAttributedString(string: L("连接 AI", "Connect AI"), attributes: [
+            .font: Theme.rounded(10.5, .semibold),
+            .foregroundColor: connected ? NSColor.secondaryLabelColor : NSColor.controlAccentColor]))
+        aiLink.attributedTitle = t
     }
 
     @objc private func rebuild() {
@@ -1387,8 +1419,8 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
         let title = NSTextField(labelWithString: L("让 AI 帮你建", "Let AI build it"))
         title.font = Theme.font(12, .semibold)
         let how = NSTextField(wrappingLabelWithString: L(
-            "最省事：回抽屉首页点「连接 AI」那一行，连上以后直接在 AI 里说要什么按钮。没法连的 AI：点「复制给 AI」贴给它，在最后写上你要的按钮；只能聊天的 AI 会回一段 JSON，复制后点「粘贴 JSON」。",
-            "Easiest: connect your AI from the “Connect AI” row on the drawer's first page, then just ask it for a button. Otherwise click Copy for AI, paste it and add what you want at the end; a chat-only AI replies with JSON: copy that and click Paste JSON."))
+            "最省事：点抽屉首页标题旁的「连接 AI」，连上以后直接在 AI 里说要什么按钮。没法连的 AI：点「复制给 AI」贴给它，在最后写上你要的按钮；只能聊天的 AI 会回一段 JSON，复制后点「粘贴 JSON」。",
+            "Easiest: connect your AI with “Connect AI” next to the drawer's title, then just ask it for a button. Otherwise click Copy for AI, paste it and add what you want at the end; a chat-only AI replies with JSON: copy that and click Paste JSON."))
         how.font = Theme.font(10.5, .regular)
         how.textColor = .secondaryLabelColor
         how.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

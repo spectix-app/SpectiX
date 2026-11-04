@@ -1300,14 +1300,13 @@ final class BranchPill: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.setContentCompressionResistancePriority(.defaultLow + 10, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow - 10, for: .horizontal)
         addSubview(icon)
         addSubview(label)
         leadPad = icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7)
         trailPad = trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 20),
-            widthAnchor.constraint(lessThanOrEqualToConstant: 170),
             leadPad, trailPad,
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
@@ -1353,6 +1352,8 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
     private let countPill = CountPill()      // one glass chip holding every status bucket
     private let branchPill = BranchPill()
     private let titleStack = NSStackView()   // folder + branch; a hidden pill drops out of layout
+    private let mergeRing = MergeRingView()  // drag-merge countdown around the badge (T387)
+    private let mergeHint = MergeHint()
     // The 8pt above the card is the ONLY separation between projects. The FIRST
     // group drops it (0): the host puts the same 8 outside the scroll view, between
     // the stats header and the list, so that gap stays put while the rows scroll
@@ -1410,8 +1411,17 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
         card.addSubview(titleStack)
 
         card.addSubview(countPill)
+        card.addSubview(mergeRing)
+        card.addSubview(mergeHint)
 
         NSLayoutConstraint.activate([
+            mergeRing.leadingAnchor.constraint(equalTo: logoBadge.leadingAnchor, constant: -5),
+            mergeRing.trailingAnchor.constraint(equalTo: logoBadge.trailingAnchor, constant: 5),
+            mergeRing.topAnchor.constraint(equalTo: logoBadge.topAnchor, constant: -5),
+            mergeRing.bottomAnchor.constraint(equalTo: logoBadge.bottomAnchor, constant: 5),
+            mergeHint.trailingAnchor.constraint(equalTo: disc.leadingAnchor, constant: -9),
+            mergeHint.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+
             // Same horizontal inset as ChildCell (6 / -6) so the per-slice side
             // borders line up into one continuous edge. The 8pt top gap is the ONLY
             // separation between projects; the bottom is flush with the first child.
@@ -1448,6 +1458,15 @@ final class HeaderCell: NSTableCellView, HandleProviding, Hoverable {
     }
 
     func setSelected(_ on: Bool, animated: Bool) { card.setSelected(on, animated: animated) }
+
+    // Drag-merge feedback while another header rests on this one (T387).
+    func setMergeState(_ s: MergeState) {
+        mergeRing.apply(s)
+        mergeHint.apply(s)
+        let hinting = !mergeHint.isHidden
+        countPill.alphaValue = hinting ? 0 : 1
+        branchPill.alphaValue = hinting ? 0 : 1
+    }
 
     // First-click jump from an inactive window — see ChildCell's note. Chevron /
     // badge hit-testing is done in window coordinates by the table, so collapsing

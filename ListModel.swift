@@ -28,9 +28,32 @@ enum DisplayItem {
     case child(SessionRow)                                        // session under a header
     case agent(AgentInfo, parent: SessionRow)                     // expanded sublist node under a child
     case service(ServiceInfo, cwd: String)                        // a server left running, at its group's bottom (T336)
+    // A user-made project group's title row; its member projects follow it (T387).
+    case group(id: String, name: String, counts: [(String, Int)], collapsed: Bool, members: [String])
 
-    var isHeader: Bool { if case .header = self { return true }; return false }
+    // A group title also starts a new card run, so it counts as a header boundary.
+    var isHeader: Bool {
+        switch self {
+        case .header, .group: return true
+        default: return false
+        }
+    }
     var isAgent: Bool { if case .agent = self { return true }; return false }
+}
+
+// Several projects the user dragged together into one block — e.g. a frontend and two
+// backends working on the same feature (T387). Members are cwds; a closed member keeps
+// its slot so the group reassembles when the window reopens.
+struct ProjectGroup: Codable, Equatable {
+    var id: String
+    var name: String?
+    var members: [String]
+}
+
+// One side of a drag-merge: a single project header or a whole group title.
+enum GroupSubject: Equatable {
+    case project(String)
+    case group(String)
 }
 
 // Which app a project header's badge represents. Derived from the group's sessions,
@@ -93,9 +116,14 @@ final class ListModel {
     // stale entry (project closed) is simply inert until the project reappears.
     private var pinnedFolders: [String] = [] { didSet { save() } }
 
+    // Project groups, persisted. Collapsing a group rides the in-memory `collapsed` set
+    // under groupKey(id), like a project's collapse.
+    private(set) var groups: [ProjectGroup] = [] { didSet { save() } }
+
     private static let folderOrderKey = "listFolderOrder"
     private static let childOrderKey = "listChildOrder"
     private static let pinnedFoldersKey = "listPinnedFolders"
+    private static let groupsKey = "listProjectGroups"
 
     init() {
         let d = UserDefaults.standard
@@ -103,6 +131,7 @@ final class ListModel {
         folderOrder = (d.array(forKey: Self.folderOrderKey) as? [String]) ?? []
         childOrder = (d.dictionary(forKey: Self.childOrderKey) as? [String: [String]]) ?? [:]
         pinnedFolders = (d.array(forKey: Self.pinnedFoldersKey) as? [String]) ?? []
+        groups = d.data(forKey: Self.groupsKey).flatMap { try? JSONDecoder().decode([ProjectGroup].self, from: $0) } ?? []
     }
 
     private func save() {
@@ -110,6 +139,7 @@ final class ListModel {
         d.set(folderOrder, forKey: Self.folderOrderKey)
         d.set(childOrder, forKey: Self.childOrderKey)
         d.set(pinnedFolders, forKey: Self.pinnedFoldersKey)
+        d.set(try? JSONEncoder().encode(groups), forKey: Self.groupsKey)
     }
 
     func update(_ newRows: [SessionRow]) {
@@ -191,32 +221,53 @@ final class ListModel {
     // layered on top, children by session number (or custom child order), or by
     // status in status mode.
     func items() -> [DisplayItem] {
-        var groups: [String: [SessionRow]] = [:]
-        for r in rows { groups[r.cwd, default: []].append(r) }
+        var byCwd: [String: [SessionRow]] = [:]
+        for r in rows { byCwd[r.cwd, default: []].append(r) }
         // An open VSCode window with no session becomes an empty group — same cwd key as
         // the real group it turns into once a session starts, so the header keeps its
         // icon, rank and position across that transition instead of jumping.
-        for p in emptyProjects where groups[p.cwd] == nil { groups[p.cwd] = [] }
+        for p in emptyProjects where byCwd[p.cwd] == nil { byCwd[p.cwd] = [] }
 
-        let keys = groups.keys.sorted(by: folderSortsBefore)
+        let keys = byCwd.keys.sorted(by: folderSortsBefore)
         let names = Self.folderNames(keys)
+        let name = { (cwd: String) in names[cwd] ?? (cwd as NSString).lastPathComponent }
+        // A group shows up where its first-ranked open member would sit, with its open
+        // members right under it in the group's own order. A group with fewer than two
+        // members open renders its lone member as a plain project.
+        let live = liveGroups(open: Set(keys))
         var out: [DisplayItem] = []
+        var emitted = Set<String>()
         for key in keys {
-            let g = sortedSessions(groups[key]!, cwd: key)
-            let folder = names[key] ?? (key as NSString).lastPathComponent
-            // A sessionless group has nothing to expand, so it's permanently collapsed and
-            // reports a single zero bucket — HeaderCell reads that shape as "empty" and
-            // renders the dimmed grey ●0 header.
-            let isCollapsed = g.isEmpty ? true : isCollapsed(key)
-            out.append(.header(folder: folder, kind: .project(cwd: key),
-                               counts: g.isEmpty ? [("idle", 0)] : Self.counts(g),
-                               collapsed: isCollapsed))
+            guard let g = live.first(where: { $0.members.contains(key) }) else {
+                appendProject(key, sessions: byCwd[key]!, folder: name(key), to: &out)
+                continue
+            }
+            guard emitted.insert(g.id).inserted else { continue }
+            let all = g.members.flatMap { byCwd[$0]! }
+            let isCollapsed = collapsed.contains(Self.groupKey(g.id))
+            let memberNames = g.members.map(name)
+            out.append(.group(id: g.id, name: g.name ?? "\(memberNames[0]) + \(g.members.count - 1)",
+                              counts: Self.counts(all), collapsed: isCollapsed, members: memberNames))
             if !isCollapsed {
-                for s in g { out.append(.child(s)); appendAgents(s, to: &out) }
-                appendServices(g, to: &out)
+                for m in g.members { appendProject(m, sessions: byCwd[m]!, folder: name(m), to: &out) }
             }
         }
         return out
+    }
+
+    private func appendProject(_ key: String, sessions: [SessionRow], folder: String, to out: inout [DisplayItem]) {
+        let g = sortedSessions(sessions, cwd: key)
+        // A sessionless group has nothing to expand, so it's permanently collapsed and
+        // reports a single zero bucket — HeaderCell reads that shape as "empty" and
+        // renders the dimmed grey ●0 header.
+        let isCollapsed = g.isEmpty ? true : isCollapsed(key)
+        out.append(.header(folder: folder, kind: .project(cwd: key),
+                           counts: g.isEmpty ? [("idle", 0)] : Self.counts(g),
+                           collapsed: isCollapsed))
+        if !isCollapsed {
+            for s in g { out.append(.child(s)); appendAgents(s, to: &out) }
+            appendServices(g, to: &out)
+        }
     }
 
     // The servers this group's sessions left running, as the last rows of its card —
@@ -342,7 +393,9 @@ final class ListModel {
     func expandGroup(containingShellPid pid: pid_t) -> Bool {
         guard let row = rows.first(where: { $0.shellPid == pid }) else { return false }
         let key = row.cwd
-        guard isCollapsed(key) else { return false }
+        // A collapsed project group hides its members entirely — open it too.
+        let groupOpened = group(containing: key).map { collapsed.remove(Self.groupKey($0.id)) != nil } ?? false
+        guard isCollapsed(key) else { return groupOpened }
         if allIdle(key) { idleExpanded.insert(key) } else { collapsed.remove(key) }
         return true
     }
@@ -398,6 +451,131 @@ final class ListModel {
     func togglePin(_ cwd: String) {
         if let i = pinnedFolders.firstIndex(of: cwd) { pinnedFolders.remove(at: i) }
         else { pinnedFolders.append(cwd) }
+    }
+
+    // MARK: Project groups (T387)
+
+    static func groupKey(_ id: String) -> String { "group:" + id }
+
+    // The groups that render as a block: members narrowed to the open projects, and
+    // only those with at least two left.
+    private func liveGroups(open: Set<String>) -> [ProjectGroup] {
+        groups.compactMap { g in
+            var v = g
+            v.members = g.members.filter(open.contains)
+            return v.members.count >= 2 ? v : nil
+        }
+    }
+
+    // The open members of a group, in the group's order.
+    func liveMembers(_ id: String) -> [String] {
+        let open = Set(orderedFolders())
+        return group(id)?.members.filter(open.contains) ?? []
+    }
+
+    func group(_ id: String) -> ProjectGroup? { groups.first { $0.id == id } }
+    func group(containing cwd: String) -> ProjectGroup? { groups.first { $0.members.contains(cwd) } }
+
+    func renameGroup(_ id: String, to name: String) {
+        guard let i = groups.firstIndex(where: { $0.id == id }) else { return }
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        groups[i].name = n.isEmpty ? nil : n
+    }
+
+    func dissolveGroup(_ id: String) {
+        groups.removeAll { $0.id == id }
+        collapsed.remove(Self.groupKey(id))
+    }
+
+    // Take a project out of whatever group holds it; a group left with one member
+    // dissolves.
+    func removeFromGroup(_ cwd: String) {
+        var next = groups
+        for i in next.indices { next[i].members.removeAll { $0 == cwd } }
+        commit(next)
+    }
+
+    // Put a project into a group before `member` (nil = at the end), leaving its old
+    // group. Also how a member reorders inside its own group.
+    func insert(_ cwd: String, intoGroup id: String, before member: String?) {
+        var next = groups
+        for i in next.indices { next[i].members.removeAll { $0 == cwd } }
+        guard let gi = next.firstIndex(where: { $0.id == id }) else { return }
+        let at = member.flatMap { next[gi].members.firstIndex(of: $0) } ?? next[gi].members.count
+        next[gi].members.insert(cwd, at: at)
+        commit(next)
+    }
+
+    // Drop `src` onto `dst` after the dwell. Returns the cwds that changed place, so the
+    // caller can re-rank them next to the group they joined (rebuildOrder).
+    @discardableResult
+    func merge(_ src: GroupSubject, onto dst: GroupSubject) -> Set<String> {
+        var next = groups
+        let take = { (cwd: String) in for i in next.indices { next[i].members.removeAll { $0 == cwd } } }
+        let index = { (id: String) in next.firstIndex { $0.id == id } }
+        var moved = Set<String>()
+        switch (src, dst) {
+        case let (.project(p), .project(t)):
+            guard p != t else { return [] }
+            take(p)
+            if let gi = next.firstIndex(where: { $0.members.contains(t) }) {
+                next[gi].members.append(p)
+            } else {
+                next.append(ProjectGroup(id: UUID().uuidString, name: nil, members: [t, p]))
+            }
+            moved = [p]
+        case let (.project(p), .group(id)):
+            take(p)
+            guard let gi = index(id) else { return [] }
+            next[gi].members.append(p)
+            moved = [p]
+        case let (.group(id), .project(t)):
+            guard let si = index(id), !next[si].members.contains(t) else { return [] }
+            if let gi = next.firstIndex(where: { $0.members.contains(t) }) {
+                moved = Set(next[si].members)
+                next[gi].members += next[si].members
+                next.remove(at: si)
+            } else {
+                take(t)
+                guard let si = index(id) else { return [] }
+                next[si].members.append(t)
+                moved = [t]
+            }
+        case let (.group(s), .group(d)):
+            guard s != d, let si = index(s), let di = index(d) else { return [] }
+            moved = Set(next[si].members)
+            next[di].members += next[si].members
+            next.remove(at: si)
+        }
+        commit(next)
+        return moved
+    }
+
+    // Drop empty and one-member groups, then publish (one save).
+    private func commit(_ next: [ProjectGroup]) {
+        let kept = next.filter { $0.members.count >= 2 }
+        for g in next where g.members.count < 2 { collapsed.remove(Self.groupKey(g.id)) }
+        groups = kept
+    }
+
+    // A folder order with every group's members contiguous. `flat` is the on-screen
+    // project order before the change; `moved` were just put into a group, so they
+    // don't anchor where that group sits — the group stays where it was and they
+    // follow its other members.
+    func rebuildOrder(flat: [String], moved: Set<String>) -> [String] {
+        var out: [String] = []
+        var done = Set<String>()
+        let onScreen = Set(flat)
+        for cwd in flat where !moved.contains(cwd) {
+            if let g = group(containing: cwd) {
+                guard done.insert(g.id).inserted else { continue }
+                out += g.members.filter(onScreen.contains)
+            } else {
+                out.append(cwd)
+            }
+        }
+        out += flat.filter { !out.contains($0) }
+        return out
     }
 }
 

@@ -12,7 +12,12 @@ import UniformTypeIdentifiers
 final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate, ReorderCoordinator {
 
     private let model: ListModel
-    private var items: [DisplayItem] = []
+    private var items: [DisplayItem] = [] { didSet { rebuildGroupIndex() } }
+    // For each row, the id of the project group whose block it sits in (title row
+    // included), else nil. Drives the rail and which drops land inside a group.
+    private var rowGroup: [String?] = []
+    // The header a drag is resting on, and since when — the drag-merge dwell (T387).
+    private var mergeDwell: (row: Int, since: Date)?
     // The on-screen render of the last reload, one string per row. A hook writing a
     // session's state-<tty>/step-<tty> makes FSEvents fire refresh() many times a
     // second, but most carry identical VISIBLE content; rebuilding the table on those
@@ -170,8 +175,133 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .child:  return h + 50
             case .agent:  return h + Theme.agentRowHeight
             case .service: return h + ServiceCell.rowHeight
+            case .group(_, _, _, let collapsed, _):
+                return h + GroupTitleCell.height(collapsed: collapsed, isFirst: e.offset == 0)
             }
         }
+    }
+
+    // MARK: Project groups (T387)
+
+    private func rebuildGroupIndex() {
+        var span: String?
+        rowGroup = items.map { it in
+            switch it {
+            case .group(let id, _, _, _, _):
+                span = id
+            case .header(_, let kind, _, _):
+                // A header stays in the open block only if it belongs to that group.
+                if let s = span, kind.projectCwd.flatMap({ model.group(containing: $0)?.id }) != s { span = nil }
+            case .child, .agent, .service:
+                break
+            }
+            return span
+        }
+    }
+
+    private func isGroupTitle(_ row: Int) -> Bool {
+        if case .group = items[row] { return true }
+        return false
+    }
+
+    // This row's stretch of its group's rail: from the title down to the last row
+    // of the last member.
+    private func rail(forRow row: Int) -> GroupRail {
+        guard row < rowGroup.count, let g = rowGroup[row] else { return .none }
+        let starts = isGroupTitle(row)
+        let ends = row == items.count - 1 || rowGroup[row + 1] != g
+        switch (starts, ends) {
+        case (true, true):  return .only
+        case (true, false): return .start
+        case (false, true): return .end
+        default:            return .middle
+        }
+    }
+
+    private func applyRail(_ rowView: NSTableRowView, row: Int) {
+        // The rail starts level with the title's icon, below the row's own top gap.
+        (rowView as? TransparentRowView)?.setGroupRail(rail(forRow: row), topInset: row == 0 ? 2 : 10)
+    }
+
+    func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        applyRail(rowView, row: row)
+    }
+
+    private func subject(_ row: Int) -> GroupSubject? {
+        switch items[row] {
+        case .header(_, let kind, _, _): return kind.projectCwd.map { .project($0) }
+        case .group(let id, _, _, _, _): return .group(id)
+        default: return nil
+        }
+    }
+
+    // Projects top to bottom as the list shows them (rows before `end`), a collapsed
+    // group standing for its open members.
+    private func projectOrder(upTo end: Int? = nil) -> [String] {
+        items[0..<min(end ?? items.count, items.count)].flatMap { it -> [String] in
+            switch it {
+            case .header(_, let kind, _, _): return kind.projectCwd.map { [$0] } ?? []
+            case .group(let id, _, _, true, _): return model.liveMembers(id)
+            default: return []
+            }
+        }
+    }
+
+    // Can the header at `src` be merged into the header / group title at `target`?
+    private func canMerge(_ src: Int, onto target: Int) -> Bool {
+        guard target != src, target >= 0, target < items.count,
+              subject(src) != nil, subject(target) != nil else { return false }
+        let srcGroup = rowGroup[src], tgtGroup = rowGroup[target]
+        // Already together: a member onto its own group (title or sibling), or a group
+        // onto anything inside itself.
+        if srcGroup != nil, srcGroup == tgtGroup { return false }
+        return true
+    }
+
+    private var mergeReady: Bool {
+        guard let d = mergeDwell else { return false }
+        return Date().timeIntervalSince(d.since) >= ProjectGroupStyle.dwell - 0.02
+    }
+
+    private func mergeState(forRow row: Int) -> MergeState {
+        guard let d = mergeDwell, d.row == row else { return .none }
+        guard mergeReady else { return .counting(since: d.since) }
+        return .ready(joining: rowGroup[row] != nil)
+    }
+
+    private func applyMergeState(row: Int) {
+        guard row >= 0, row < items.count else { return }
+        let v = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+        let s = mergeState(forRow: row)
+        (v as? HeaderCell)?.setMergeState(s)
+        (v as? GroupTitleCell)?.setMergeState(s)
+    }
+
+    private func startDwell(on row: Int) {
+        guard mergeDwell?.row != row else { return }
+        clearDwell()
+        let since = Date()
+        mergeDwell = (row, since)
+        applyMergeState(row: row)
+        // Flip to "ready" on time even if the pointer stops moving and AppKit sends no
+        // further drag updates.
+        DispatchQueue.main.asyncAfter(deadline: .now() + ProjectGroupStyle.dwell) { [weak self] in
+            guard let self, let d = self.mergeDwell, d.row == row, d.since == since else { return }
+            self.applyMergeState(row: row)
+        }
+    }
+
+    private func clearDwell() {
+        guard let d = mergeDwell else { return }
+        mergeDwell = nil
+        applyMergeState(row: d.row)
+    }
+
+    private func merge(_ src: Int, onto target: Int) {
+        guard let s = subject(src), let t = subject(target) else { return }
+        let flat = projectOrder()
+        let moved = model.merge(s, onto: t)
+        model.setFolderOrder(model.rebuildOrder(flat: flat, moved: moved))
     }
 
     func reload(_ rows: [SessionRow]) {
@@ -240,7 +370,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             // A collapsed group emits no children, so its header's counts are the only
             // trace of what's inside — read them, or a collapsed 需确认 folder down
             // there stays invisible, which is the whole bug this fixes.
-            case .header(_, _, let counts, _):
+            case .header(_, _, let counts, _), .group(_, _, let counts, _, _):
                 let live = counts.filter { $0.1 > 0 }.map { $0.0 }
                 st = live.contains("needs") ? "needs" : (live.contains("done") ? "done" : nil)
             case .child(let r):
@@ -268,6 +398,9 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
                 let c = counts.map { "\($0.0):\($0.1)" }.joined(separator: ",")
                 let branch = kind.projectCwd.flatMap { AppSettings.showsBranch(cwd: $0) ? GitBranch.current(cwd: $0) : nil } ?? ""
                 return "H¦\(folder)¦\(kind.collapseKey)¦\(collapsed)¦\(c)¦\(source)¦\(pinned)¦\(branch)"
+            case .group(let id, let name, let counts, let collapsed, let members):
+                let c = counts.map { "\($0.0):\($0.1)" }.joined(separator: ",")
+                return "G¦\(id)¦\(name)¦\(collapsed)¦\(c)¦\(members.joined(separator: ","))"
             case .child(let r):
                 let isFirst = i == 0 || items[i - 1].isHeader
                 let isLast = i == items.count - 1 || items[i + 1].isHeader
@@ -411,7 +544,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     private var selectableTargets: [KBTarget] {
         items.compactMap {
             switch $0 {
-            case .child, .agent, .service: return nil
+            case .child, .agent, .service, .group: return nil
             case .header(_, let k, _, _): return .header(k.collapseKey)
             }
         }
@@ -472,10 +605,10 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     // MARK: Drag-to-reorder (collapse-all while a header drags)
 
+    // Project headers and group titles: both drag by their icon and start a card run.
     func rowIsHeader(_ row: Int) -> Bool {
         guard row >= 0, row < items.count else { return false }
-        if case .header = items[row] { return true }
-        return false
+        return items[row].isHeader
     }
 
     // The header + its child rows (down to the next header / end of list). Used by the
@@ -497,16 +630,16 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     }
 
     func beginHeaderDrag(originalRow: Int) -> Int? {
-        guard originalRow >= 0, originalRow < items.count,
-              case .header(_, let kind, _, _) = items[originalRow],
-              let cwd = kind.projectCwd else { return nil }
+        guard originalRow >= 0, originalRow < items.count, let dragged = subject(originalRow) else { return nil }
         model.beginDragCollapseAll()
         refreshItems()
-        // The dragged folder's new row index in the now all-collapsed list.
-        return items.firstIndex { if case .header(_, let k, _, _) = $0 { return k.projectCwd == cwd }; return false }
+        // The dragged row's new index in the now all-collapsed list (groups stay open so
+        // their members remain drop targets).
+        return items.indices.first { subject($0) == dragged }
     }
 
     func endHeaderDrag() {
+        clearDwell()
         model.endDragCollapse()
         refreshItems()
     }
@@ -516,6 +649,19 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
                    proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
         guard let src = sourceRow(from: info) else { return [] }
+        // Resting a dragged header on another header (or a group title) for the dwell
+        // merges them on release (T387). Until the dwell completes the drop stays a
+        // plain reorder, so a quick pass over a header never merges by accident.
+        if items[src].isHeader, op == .on, canMerge(src, onto: row) {
+            startDwell(on: row)
+            if mergeReady {
+                applyMergeState(row: row)
+                tableView.setDropRow(row, dropOperation: .on)
+                return .move
+            }
+        } else {
+            clearDwell()
+        }
         // Retarget an onto-row drop to an insertion so the whole row height is a valid
         // drop target, not just the thin gaps between rows.
         tableView.setDropRow(constrainedDropRow(source: src, proposed: row), dropOperation: .above)
@@ -525,9 +671,18 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
                    row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
         guard let src = sourceRow(from: info) else { return false }
+        // The dwell may have completed after AppKit's last validateDrop, so trust the
+        // clock rather than the drop operation.
+        if let d = mergeDwell, mergeReady, items[src].isHeader {
+            clearDwell()
+            merge(src, onto: d.row)
+            refreshItems()
+            return true
+        }
+        clearDwell()
         let target = constrainedDropRow(source: src, proposed: row)
         switch items[src] {
-        case .header: reorderFolder(from: src, toRow: target)
+        case .header, .group: reorderFolder(from: src, toRow: target)
         case .child:  reorderChild(from: src, toRow: target)
         case .agent, .service: return false   // sublist / server rows are not draggable
         }
@@ -549,6 +704,12 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             return min(max(proposed, h + 1), groupEnd(headerAt: h))
         case .header:
             return folderBoundaries().min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? proposed
+        case .group(let id, _, _, _, _):
+            // A whole group lands only between top-level blocks — never inside another
+            // group, nor inside its own span.
+            let b = folderBoundaries().filter { $0 == items.count || rowGroup[$0] == nil || isGroupTitle($0) }
+                .filter { $0 == items.count || rowGroup[$0] != id || isGroupTitle($0) }
+            return b.min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? proposed
         case .agent, .service:
             return proposed   // unreachable — these rows never start a drag
         }
@@ -570,7 +731,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     // Table rows where a folder may start: every header, plus end-of-list.
     private func folderBoundaries() -> [Int] {
-        var b = items.indices.filter { if case .header = items[$0] { return true }; return false }
+        var b = items.indices.filter { items[$0].isHeader }
         b.append(items.count)
         return b
     }
@@ -600,16 +761,33 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         model.setChildOrder(ttys, for: moved.cwd)
     }
 
+    // Move a project header or a whole group to the boundary above row `target`. A
+    // project dropped between a group's members joins (or reorders within) that group;
+    // dropped anywhere else it leaves its group (T387).
     private func reorderFolder(from src: Int, toRow target: Int) {
-        guard case .header(_, let kind, _, _) = items[src], let cwd = kind.projectCwd else { return }
-        var keys: [String] = items.compactMap { if case .header(_, let k, _, _) = $0 { return k.projectCwd }; return nil }
-        guard let from = keys.firstIndex(of: cwd) else { return }
-        var to = items[0..<min(target, items.count)].reduce(0) { n, it in
-            if case .header = it { return n + 1 }; return n
+        let flat = projectOrder()
+        let moving: [String]
+        switch subject(src) {
+        case .project(let cwd):
+            if target < items.count, let g = rowGroup[target], !isGroupTitle(target),
+               case .header(_, let k, _, _) = items[target], let before = k.projectCwd {
+                if before == cwd { return }
+                model.insert(cwd, intoGroup: g, before: before)
+                model.setFolderOrder(model.rebuildOrder(flat: flat, moved: [cwd]))
+                return
+            }
+            model.removeFromGroup(cwd)
+            moving = [cwd]
+        case .group(let id):
+            moving = model.liveMembers(id)
+        case nil:
+            return
         }
-        keys.remove(at: from)
-        if from < to { to -= 1 }
-        keys.insert(cwd, at: min(max(to, 0), keys.count))
+        // Projects above the drop line, not counting the ones being moved.
+        let above = Set(projectOrder(upTo: target))
+        var keys = flat.filter { !moving.contains($0) }
+        let to = keys.filter(above.contains).count
+        keys.insert(contentsOf: moving, at: min(to, keys.count))
         model.setFolderOrder(keys)
     }
 
@@ -630,6 +808,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         case .child:  return 54
         case .agent:  return Theme.agentRowHeight
         case .service: return ServiceCell.rowHeight
+        case .group(_, _, _, let collapsed, _): return GroupTitleCell.height(collapsed: collapsed, isFirst: row == 0)
         }
     }
 
@@ -648,6 +827,9 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         case .service:
             let id = NSUserInterfaceItemIdentifier("service")
             cell = (tableView.makeView(withIdentifier: id, owner: self) as? ServiceCell) ?? ServiceCell(id: id)
+        case .group:
+            let id = NSUserInterfaceItemIdentifier("group")
+            cell = (tableView.makeView(withIdentifier: id, owner: self) as? GroupTitleCell) ?? GroupTitleCell(id: id)
         }
         configureCell(cell, row: row)
         return cell
@@ -662,6 +844,11 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             let pinned = kind.projectCwd.map { model.isPinned($0) } ?? false
             cell.configure(folder: folder, counts: counts, collapsed: collapsed, kind: kind, source: source, pinned: pinned,
                            isFirst: row == 0)
+            cell.setMergeState(mergeState(forRow: row))
+        case .group(_, let name, let counts, let collapsed, let members):
+            guard let cell = view as? GroupTitleCell else { return false }
+            cell.configure(name: name, counts: counts, collapsed: collapsed, members: members, isFirst: row == 0)
+            cell.setMergeState(mergeState(forRow: row))
         case .child(let r):
             guard let cell = view as? ChildCell else { return false }
             // First child = the row above is a header (rounds nothing extra, skips the
@@ -699,6 +886,8 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         let sameShape = old.count == items.count && zip(old, items).allSatisfy { a, b in
             switch (a, b) {
             case (.header, .header), (.child, .child), (.agent, .agent), (.service, .service): return true
+            // Same height too: a collapse flip changes the title row's height.
+            case (.group(_, _, _, let a, _), .group(_, _, _, let b, _)): return a == b
             default: return false
             }
         }
@@ -709,6 +898,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             tableView.enumerateAvailableRowViews { rowView, row in
                 guard inPlace, row < items.count, let v = rowView.view(atColumn: 0) as? NSView else { return }
                 inPlace = configureCell(v, row: row)
+                applyRail(rowView, row: row)
             }
             if inPlace { return }
         }
@@ -759,6 +949,9 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             fireJump(parent)
         case .service:
             break   // its own buttons act; the row body has nowhere to jump
+        case .group(let id, _, _, _, _):
+            // A group has no window of its own to jump to — the whole row folds it.
+            toggleCollapse(ListModel.groupKey(id))
         case .header(_, let kind, _, _):
             let cell = tableView.view(atColumn: 0, row: r, makeIfNecessary: false) as? HeaderCell
             var onChevron = false
@@ -817,9 +1010,10 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     // on a header reads as "hide this whole project". Child rows return nil (a
     // per-terminal temporary hide is a v2 concern; there's no stable per-terminal id).
     private func contextMenu(forRow row: Int) -> NSMenu? {
+        guard row >= 0, row < items.count else { return nil }
+        if case .group(let id, let name, _, _, _) = items[row] { return groupMenu(id: id, name: name) }
         // Only project headers get a menu; a status bucket isn't a project.
-        guard row >= 0, row < items.count,
-              case .header(let folder, let kind, _, _) = items[row],
+        guard case .header(let folder, let kind, _, _) = items[row],
               let cwd = kind.projectCwd else { return nil }
 
         let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? HeaderCell
@@ -847,12 +1041,82 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         pin.target = self
         pin.representedObject = ["cwd": cwd]
         menu.addItem(pin)
+        if rowGroup[row] != nil, case .group(_, let gname, _, _, _)? = groupTitle(above: row) {
+            let leave = NSMenuItem(title: L("移出「\(gname)」", "Remove from \"\(gname)\""),
+                                   action: #selector(leaveGroupClicked(_:)), keyEquivalent: "")
+            leave.target = self
+            leave.representedObject = ["cwd": cwd]
+            menu.addItem(leave)
+        }
         let title = L("隐藏「\(display)」", "Hide \"\(display)\"")
         let item = NSMenuItem(title: title, action: #selector(hideClicked(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = ["cwd": cwd, "folder": display]
         menu.addItem(item)
         return menu
+    }
+
+    private func groupTitle(above row: Int) -> DisplayItem? {
+        var i = row
+        while i >= 0 { if isGroupTitle(i) { return items[i] }; i -= 1 }
+        return nil
+    }
+
+    private func groupMenu(id: String, name: String) -> NSMenu {
+        let menu = NSMenu()
+        let rename = NSMenuItem(title: L("重命名组…", "Rename Group…"),
+                                action: #selector(renameGroupClicked(_:)), keyEquivalent: "")
+        rename.target = self
+        rename.representedObject = ["id": id, "name": name]
+        menu.addItem(rename)
+        menu.addItem(.separator())
+        let ungroup = NSMenuItem(title: L("解散组", "Ungroup"),
+                                 action: #selector(ungroupClicked(_:)), keyEquivalent: "")
+        ungroup.target = self
+        ungroup.representedObject = ["id": id]
+        menu.addItem(ungroup)
+        return menu
+    }
+
+    @objc private func renameGroupClicked(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let id = info["id"], let name = info["name"] else { return }
+        let alert = NSAlert()
+        alert.messageText = L("重命名组", "Rename group")
+        alert.informativeText = L("留空恢复默认名。", "Leave empty for the default name.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = model.group(id)?.name ?? ""
+        field.placeholderString = name
+        alert.accessoryView = field
+        alert.addButton(withTitle: L("确定", "OK"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        PopoverHold.begin()
+        let ok = alert.runModal() == .alertFirstButtonReturn
+        PopoverHold.end()
+        guard ok else { return }
+        model.renameGroup(id, to: field.stringValue)
+        refreshItems()
+    }
+
+    @objc private func ungroupClicked(_ sender: NSMenuItem) {
+        guard let id = (sender.representedObject as? [String: String])?["id"] else { return }
+        model.dissolveGroup(id)
+        refreshItems()
+    }
+
+    @objc private func leaveGroupClicked(_ sender: NSMenuItem) {
+        guard let cwd = (sender.representedObject as? [String: String])?["cwd"] else { return }
+        // Park it right below the group it leaves, so it doesn't jump elsewhere.
+        let flat = projectOrder()
+        let mates = model.group(containing: cwd)?.members ?? []
+        model.removeFromGroup(cwd)
+        var keys = flat.filter { $0 != cwd }
+        let lastMate = keys.lastIndex { mates.contains($0) } ?? (keys.count - 1)
+        keys.insert(cwd, at: min(lastMate + 1, keys.count))
+        model.setFolderOrder(keys)
+        refreshItems()
     }
 
     @objc private func branchClicked(_ sender: NSMenuItem) {
@@ -918,6 +1182,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
             case .child(let r):            match = r.cwd == cwd
             case .agent(_, let parent):    match = parent.cwd == cwd
             case .service(_, let c):       match = c == cwd
+            case .group:                   match = false
             }
             if match, let rv = tableView.rowView(atRow: i, makeIfNecessary: false) { rowViews.append(rv) }
         }
@@ -1053,4 +1318,20 @@ final class TransparentRowView: NSTableRowView {
     required init?(coder: NSCoder) { fatalError() }
     override func drawSelection(in dirtyRect: NSRect) {}
     override var isEmphasized: Bool { get { false } set {} }
+    // A merge target shows its own ring (MergeRingView), not AppKit's blue drop box.
+    override func drawDraggingDestinationFeedback(in dirtyRect: NSRect) {}
+
+    // The project-group rail segment (see setGroupRail in ProjectGroupViews.swift).
+    lazy var railLayer: CALayer = {
+        let l = CALayer()
+        l.isHidden = true
+        layer?.addSublayer(l)
+        return l
+    }()
+    var railState: (GroupRail, CGFloat) = (.none, 0)
+
+    override func layout() {
+        super.layout()
+        if railState.0 != .none { setGroupRail(railState.0, topInset: railState.1) }
+    }
 }

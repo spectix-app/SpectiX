@@ -5,12 +5,13 @@ import Cocoa
 // screenshot the real window. Reads the real ~/.claude/spectix/actions.json; the second
 // column hovers the first tile. detail-*.png shows the detail page never-run / running
 // (live output) / failed, driven by real runs of throwaway scripts; editor-*.png is the
-// add / edit page inside the drawer (new script · a skill · the list searched · a sub-skill).
+// add / edit page inside the drawer (new script · a skill · the list searched · a sub-skill);
+// connect-*.png is the Connect AI page at both widths.
 
 let widths: [CGFloat] = [384, 468]
 
 func render(width: CGFloat, look: NSAppearance, hoverFirst: Bool, detail: QuickAction? = nil,
-            form: QuickAction?? = nil, search: String? = nil) -> NSBitmapImageRep? {
+            form: QuickAction?? = nil, search: String? = nil, aiPage: Bool = false) -> NSBitmapImageRep? {
     let win = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: width, height: 400),
                        styleMask: [.borderless], backing: .buffered, defer: false)
     win.appearance = look
@@ -32,6 +33,9 @@ func render(width: CGFloat, look: NSAppearance, hoverFirst: Bool, detail: QuickA
     ])
     drawer.prepareForShow()
     if let detail { drawer.showDetail(detail) }
+    if aiPage { drawer.showAIPage() }
+    // Registration is read off the main thread; let it land before the shot.
+    for _ in 0..<(aiPage ? 15 : 3) { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
     if let form {
         drawer.showForm(form)
         // The skill list loads off the main thread.
@@ -136,6 +140,8 @@ for spec in ThemeRegistry.all {
                          render(width: 384, look: look, hoverFirst: false, form: skill, search: "task"),
                          render(width: 384, look: look, hoverFirst: false, form: sub, search: "daily")].compactMap { $0 }
             try? row(forms)?.write(to: URL(fileURLWithPath: "\(outDir)/editor-\(lookName).png"))
+            let connect = widths.compactMap { render(width: $0, look: look, hoverFirst: false, aiPage: true) }
+            try? row(connect)?.write(to: URL(fileURLWithPath: "\(outDir)/connect-\(lookName).png"))
         }
     }
 }

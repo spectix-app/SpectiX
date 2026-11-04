@@ -360,12 +360,13 @@ enum MCPClient: String, CaseIterable {
     }
 }
 
-// MARK: - Drawer row
+// MARK: - Connect page
 
-// "连接 AI  ● Claude Code  ＋ Codex  ＋ Cursor" under the drawer title, plus one hint
-// line. Green dot = registered; click it for a menu to disconnect, click "＋" to register.
+// One line per installed AI: "● Claude Code  connected · used 3m ago  [Disconnect]",
+// plus an error line when connecting fails.
 final class MCPConnectRow: NSView {
-    private let label = NSTextField(labelWithString: L("连接 AI", "Connect AI"))
+    /// Any client registered — drives the dot on the drawer's "连接 AI" button.
+    var onConnectedChange: ((Bool) -> Void)?
     private let chips = NSStackView()
     private let hint = NSTextField(wrappingLabelWithString: "")
     private var registered: [MCPClient: Bool] = [:]
@@ -376,15 +377,13 @@ final class MCPConnectRow: NSView {
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        label.font = Theme.rounded(10, .heavy)
-        label.textColor = .tertiaryLabelColor
+        chips.orientation = .vertical
+        chips.alignment = .leading
         chips.spacing = 4
         hint.font = Theme.font(10.5, .regular)
         hint.textColor = .tertiaryLabelColor
         hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let top = NSStackView(views: [label, chips])
-        top.spacing = 8
-        let col = NSStackView(views: [top, hint])
+        let col = NSStackView(views: [chips, hint])
         col.orientation = .vertical
         col.alignment = .leading
         col.spacing = 3
@@ -396,6 +395,7 @@ final class MCPConnectRow: NSView {
             col.leadingAnchor.constraint(equalTo: leadingAnchor),
             col.trailingAnchor.constraint(equalTo: trailingAnchor),
             hint.widthAnchor.constraint(equalTo: col.widthAnchor),
+            chips.widthAnchor.constraint(equalTo: col.widthAnchor),
         ])
         render()
     }
@@ -422,68 +422,65 @@ final class MCPConnectRow: NSView {
         DispatchQueue.global(qos: .utility).async {
             let r = Dictionary(uniqueKeysWithValues: list.map { ($0, $0.isRegistered) })
             DispatchQueue.main.async { [weak self] in
-                guard let self, r != self.registered || self.hint.stringValue.isEmpty else { self?.renderHint(); return }
-                self.registered = r
-                self.render()
+                self?.registered = r
+                self?.render()   // also ticks "used 3m ago"
             }
         }
     }
 
+    // One line per installed client: name, state, and a connect / disconnect button.
     private func render() {
         chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let list = clients
         isHidden = list.isEmpty
         for c in list {
             let on = registered[c] == true
-            let b = NSButton(title: "", target: self, action: #selector(chipClicked(_:)))
+            let name = NSMutableAttributedString(string: on ? "● " : "○ ", attributes: [
+                .font: Theme.rounded(10, .bold),
+                .foregroundColor: on ? Status.accent("done") : NSColor.tertiaryLabelColor])
+            name.append(NSAttributedString(string: c.title, attributes: [
+                .font: Theme.rounded(11, .semibold), .foregroundColor: NSColor.labelColor]))
+            let nameLabel = NSTextField(labelWithAttributedString: name)
+            let state = NSTextField(labelWithString: stateText(c, on: on))
+            state.font = Theme.font(10.5, .regular)
+            state.textColor = .tertiaryLabelColor
+            state.lineBreakMode = .byTruncatingTail
+            state.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let b = NSButton(title: "", target: self, action: #selector(toggle(_:)))
             b.isBordered = false
+            b.attributedTitle = NSAttributedString(
+                string: busy == c ? "…" : on ? L("断开", "Disconnect") : L("连接", "Connect"),
+                attributes: [.font: Theme.rounded(10.5, .semibold),
+                             .foregroundColor: busy != nil ? NSColor.tertiaryLabelColor
+                                 : on ? NSColor.systemRed : NSColor.controlAccentColor])
             b.tag = MCPClient.allCases.firstIndex(of: c) ?? 0
-            let mark = busy == c ? "… " : on ? "● " : "＋ "
-            let t = NSMutableAttributedString(string: mark, attributes: [
-                .font: Theme.rounded(10.5, .bold),
-                .foregroundColor: on ? Status.accent("done") : NSColor.controlAccentColor])
-            t.append(NSAttributedString(string: c.title, attributes: [
-                .font: Theme.rounded(10.5, .semibold),
-                .foregroundColor: on ? NSColor.labelColor : NSColor.controlAccentColor]))
-            b.attributedTitle = t
-            b.toolTip = on ? L("已连接，点一下可以断开", "Connected; click to disconnect")
-                           : L("点一下把 SpectiX 连到 \(c.title)", "Click to connect SpectiX to \(c.title)")
-            chips.addArrangedSubview(b)
+            b.toolTip = on ? L("从 \(c.title) 的设置里去掉 SpectiX，随时可以再连", "Remove SpectiX from \(c.title)'s settings; you can reconnect any time")
+                           : L("把 SpectiX 登记到 \(c.title)", "Register SpectiX with \(c.title)")
+            let line = NSStackView(views: [nameLabel, state, NSView(), b])
+            line.spacing = 6
+            chips.addArrangedSubview(line)
+            line.widthAnchor.constraint(equalTo: chips.widthAnchor).isActive = true
         }
         renderHint()
+        onConnectedChange?(list.contains { registered[$0] == true })
+    }
+
+    private func stateText(_ c: MCPClient, on: Bool) -> String {
+        guard on else { return L("未连接", "not connected") }
+        guard let t = c.lastSeen else { return L("已连接 · 新开一个会话后生效", "connected · start a new session") }
+        return L("已连接 · \(QuickActionDetail.ago(t))用过", "connected · used \(QuickActionDetail.ago(t))")
     }
 
     private func renderHint() {
-        if let e = lastError {
-            hint.textColor = .systemOrange
-            hint.stringValue = e
-            return
-        }
-        hint.textColor = .tertiaryLabelColor
-        let on = clients.filter { registered[$0] == true }
-        guard !on.isEmpty else {
-            hint.stringValue = L("连上以后，在 AI 里说「给 SpectiX 加个按钮…」它就直接建好。",
-                                 "Once connected, tell the AI “add a SpectiX button that…” and it builds it.")
-            return
-        }
-        let seen = on.map { c -> String in
-            guard let t = c.lastSeen else { return L("\(c.title) 新开一个会话后生效", "\(c.title): start a new session") }
-            return L("\(c.title) \(QuickActionDetail.ago(t))用过", "\(c.title) used \(QuickActionDetail.ago(t))")
-        }
-        hint.stringValue = L("在 AI 里说「给 SpectiX 加个按钮…」就行 · ", "Tell the AI “add a SpectiX button that…” · ")
-            + seen.joined(separator: " · ")
+        hint.isHidden = lastError == nil
+        hint.textColor = .systemOrange
+        hint.stringValue = lastError ?? ""
     }
 
-    @objc private func chipClicked(_ sender: NSButton) {
-        let c = MCPClient.allCases[sender.tag]
+    @objc private func toggle(_ sender: NSButton) {
         guard busy == nil else { return }
-        if registered[c] == true {
-            let m = NSMenu()
-            m.addItem(ClosureMenuItem(title: L("断开 \(c.title)", "Disconnect \(c.title)")) { [weak self] in self?.set(c, on: false) })
-            m.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
-        } else {
-            set(c, on: true)
-        }
+        let c = MCPClient.allCases[sender.tag]
+        set(c, on: registered[c] != true)
     }
 
     private func set(_ c: MCPClient, on: Bool) {
@@ -498,4 +495,75 @@ final class MCPConnectRow: NSView {
             self.render()
         }
     }
+}
+
+// The drawer page behind the "连接 AI" button: the three connect buttons, then what
+// to say, how it works and what the AI cannot do.
+final class MCPConnectPage: NSView {
+    var onBack: (() -> Void)?
+    let row = MCPConnectRow()
+    private let back = NSButton(title: L("‹ 快捷动作", "‹ Quick actions"), target: nil, action: nil)
+    private let heading = NSTextField(labelWithString: L("连接 AI", "Connect AI"))
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        back.isBordered = false
+        back.font = Theme.rounded(10.5, .semibold)
+        back.contentTintColor = .secondaryLabelColor
+        back.target = self
+        back.action = #selector(backClicked)
+        heading.font = Theme.rounded(13.5, .bold)
+
+        let sections: [(String, String)] = [
+            (L("怎么用", "How to use it"),
+             L("在上面你用的那家点「连接」，再新开一个会话，直接说要什么按钮。不想用了就点「断开」，SpectiX 会从它的设置里删掉自己，你的按钮不受影响。",
+               "Click Connect next to the one you use, start a new session, then just say what button you want. Changed your mind? Disconnect removes SpectiX from its settings; your buttons stay.")),
+            (L("可以这样说", "Things to say"),
+             L("「SpectiX 都有哪些按钮」\n「加个按钮，每天早上跑 /morning」\n「把『看磁盘』改名叫『磁盘』」\n「删掉看磁盘那个」",
+               "“What buttons does SpectiX have?”\n“Add a button that runs /morning”\n“Rename ‘Disk’ to ‘Storage’”\n“Delete the Disk button”")),
+            (L("怎么做到的", "How it works"),
+             L("连接会在那家 AI 的设置里登记 SpectiX。之后 AI 每开一个会话，就在后台临时启动一份 SpectiX，让它改你的按钮清单。两边在这台电脑上直接传话，不联网。「N 分钟前用过」是 AI 上次叫它的时间。",
+               "Connecting registers SpectiX in that AI's settings. Each new session, the AI starts a copy of SpectiX in the background and asks it to change your buttons. They talk on this Mac, with no network. “Used N ago” is when the AI last called it.")),
+            (L("它不会做的", "What it won't do"),
+             L("替你按按钮。运行还是要你自己点，「运行前先问我一句」不会被绕过。",
+               "Press a button for you. Running stays a click of yours, so “Ask before running” cannot be bypassed.")),
+            (L("连不上的 AI", "AIs that can't connect"),
+             L("点「＋」添加按钮，在「让 AI 帮你建」里点「复制给 AI」，把那段话贴给它。",
+               "Click “＋”, then Copy for AI under “Let AI build it”, and paste that to the AI.")),
+        ]
+        var views: [NSView] = [NSStackView(views: [back, NSView()]), heading, row]
+        var bodies: [NSView] = []
+        for (title, text) in sections {
+            let t = NSTextField(labelWithString: title)
+            t.font = Theme.rounded(9.5, .heavy)
+            t.textColor = .tertiaryLabelColor
+            let b = NSTextField(wrappingLabelWithString: text)
+            b.font = Theme.font(11, .regular)
+            b.textColor = .secondaryLabelColor
+            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            views += [t, b]
+            bodies.append(b)
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.setCustomSpacing(6, after: views[0])
+        stack.setCustomSpacing(8, after: heading)
+        stack.setCustomSpacing(12, after: row)
+        for b in bodies.dropLast() { stack.setCustomSpacing(10, after: b) }
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        for v in [views[0], row] + bodies { v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func backClicked() { onBack?() }
 }

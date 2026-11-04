@@ -18,7 +18,7 @@ import Cocoa
 // with Theme.baseFill) and model values only, never mid-animation frames.
 
 enum Shot: CaseIterable {
-    case rest, selected, hover, hoverGroup, selectedAndHover, selectedInHoveredGroup, agentCluster
+    case rest, selected, hover, hoverGroup, selectedAndHover, selectedInHoveredGroup, agentCluster, groupFolded
 
     var label: String {
         switch self {
@@ -29,6 +29,7 @@ enum Shot: CaseIterable {
         case .selectedAndHover: return "selected + hover below"
         case .selectedInHoveredGroup: return "selected + own group hovered"
         case .agentCluster:     return "hover agent cluster (1 + \(clusterAgents))"
+        case .groupFolded:      return "project group folded"
         }
     }
 }
@@ -97,6 +98,14 @@ func render(_ shot: Shot, look: NSAppearance, previewWidth: CGFloat,
 
     let model = ListModel()
     if shot == .agentCluster, let tty = clusterTty { model.toggleAgentExpanded(tty) }
+    // Every column shows one project group (T387): two demo projects dragged together.
+    let groupCwds = ["pico-engine", "notes-api"].compactMap { leaf in previewRows.first { $0.cwd.hasSuffix("/" + leaf) }?.cwd }
+    if groupCwds.count == 2 {
+        model.merge(.project(groupCwds[1]), onto: .project(groupCwds[0]))
+        if shot == .groupFolded, let g = model.group(containing: groupCwds[0]) {
+            model.toggleCollapse(ListModel.groupKey(g.id))
+        }
+    }
     let list = SessionListView(model: model)
     host.addSubview(list)
     list.reload(shot == .agentCluster ? clusterRows : previewRows)
@@ -140,6 +149,7 @@ func render(_ shot: Shot, look: NSAppearance, previewWidth: CGFloat,
     // The one combination the other five miss: the SELECTED row is itself inside the
     // lifted group, so its halo wears the group scale while the halo's mask does not.
     case .selectedInHoveredGroup: table.setPinnedRow(t.first); pointAt(t.header)
+    case .groupFolded:      break
     case .agentCluster:
         let rows = (0..<table.numberOfRows).map { list.agentClusterRows(childRow: $0) }
         let cluster = rows.first { !$0.isEmpty } ?? []
@@ -184,6 +194,11 @@ func sheet(_ reps: [NSBitmapImageRep]) -> Data? {
 }
 
 NSApplication.shared.setActivationPolicy(.accessory)
+// The preview's ListModel persists into this binary's own defaults; start and end clean
+// so one run's demo group never leaks into the next.
+let groupsKey = "listProjectGroups"
+UserDefaults.standard.removeObject(forKey: groupsKey)
+defer { UserDefaults.standard.removeObject(forKey: groupsKey) }
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 print("demo rows: \(previewRows.count) — " + previewRows.map { "\($0.folder)/\($0.status)" }.joined(separator: " "))
 

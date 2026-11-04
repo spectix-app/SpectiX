@@ -6,7 +6,7 @@
 
 一个纯 JSON 数组。**这份文件就是接口** —— 用户说「帮我加个 SpectiX 按钮」时，任何 Claude 会话直接改这个文件即可，不需要 MCP。App 每次打开抽屉都会 stat 一次，文件变了就重读。
 
-**连接 AI（MCP，2026-10-27 用户要求，功能冻结期当面破例）**：抽屉首页标题下一行「连接 AI」，Claude Code / Codex / Cursor 各一个按钮（只列这台电脑装了的）。连上后在 AI 里说「给 SpectiX 加个按钮…」，AI 调 `add_quick_action` 等 4 个工具（list / add / update / delete，`QuickActionsMCP.swift`）直接写 `actions.json`，抽屉开着时 3 秒内刷出来。
+**连接 AI（MCP，2026-10-27 用户要求，功能冻结期当面破例）**：抽屉首页标题旁一个「连接 AI」按钮（任一家连上时前面带绿点），点开是抽屉里单独一页（`MCPConnectPage`）：Claude Code / Codex / Cursor 每家一行（只列这台电脑装了的），写着连没连、上次什么时候用过，右边一个「连接」/「断开」按钮；下面是怎么用 · 可以这样说 · 怎么做到的 · 它不会做的 · 连不上的 AI 五段说明（2026-10-27 用户要求：入口和说明放一处，断开要明摆着，不能藏在菜单里）。连上后在 AI 里说「给 SpectiX 加个按钮…」，AI 调 `add_quick_action` 等 4 个工具（list / add / update / delete，`QuickActionsMCP.swift`）直接写 `actions.json`，抽屉开着时 3 秒内刷出来。
 
 - **服务端就是 SpectiX 自己的二进制加 `--mcp`**（`main.swift` 入口第一行判断，不建 NSApplication）。不另打一个可执行文件，就不用第二份签名 / 公证 / 安装器改动。代价：dev 机上 `pkill -x SpectiX` 会顺带杀掉 AI 那边正在跑的 MCP 进程，下一个会话会自动重起
 - **不联网**：MCP 走 stdin/stdout，没有 socket，build.sh 两道 gate 照过
