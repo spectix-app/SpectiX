@@ -439,6 +439,44 @@ push_watch() { # $1=state (needs|done)
   } &
 }
 
+# Is a run_in_background Bash command of this session still running? The shell half of
+# the done-chime gate: such a command leaves no ledger entry, and when it exits the model
+# wakes by itself, so a Stop while one is alive is not a completion — and with N shells the
+# chime used to ring once per wake-up. Mirrors the app's await probe (commandShells +
+# ServiceProbe in main.swift): a direct `sh -c` child of `claude` carrying the
+# shell-snapshots/ signature, not a hook, and not listening on a TCP port (a dev server
+# never wakes the model, so it must not mute the chime for hours).
+bg_shells_running() {
+  local p=$PPID claude="" c args et tree frontier next q i
+  while [ "${p:-0}" -gt 1 ]; do
+    case "$(ps -o comm= -p "$p" 2>/dev/null)" in */claude|claude) claude="$p"; break ;; esac
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  [ -z "$claude" ] && return 1
+  for c in $(pgrep -P "$claude" 2>/dev/null); do
+    args=$(ps -o args= -p "$c" 2>/dev/null)
+    case "$args" in *.claude/hooks/*) continue ;; esac
+    case "$args" in *shell-snapshots/*) ;; *) continue ;; esac
+    case "${args%% *}" in */zsh|*/bash|*/sh|zsh|bash|sh) ;; *) continue ;; esac
+    # Sibling Stop hooks start alongside this one and can be snapshot-wrapped too;
+    # a real background command has already lived through the turn's tail.
+    et=$(ps -o etime= -p "$c" 2>/dev/null | tr -d ' ')
+    case "$et" in ''|00:00|00:01) continue ;; esac
+    tree=""; frontier=$(pgrep -P "$c" 2>/dev/null)
+    for i in 1 2 3 4 5 6; do
+      [ -z "$frontier" ] && break
+      next=""
+      for q in $frontier; do tree="$tree,$q"; next="$next $(pgrep -P "$q" 2>/dev/null)"; done
+      frontier=$next
+    done
+    if [ -n "$tree" ] && lsof -nP -a -iTCP -sTCP:LISTEN -p "${tree#,}" >/dev/null 2>&1; then
+      continue
+    fi
+    return 0
+  done
+  return 1
+}
+
 case "$state" in
   done)
     # A non-empty ledger means this Stop is NOT a completion: the main turn only parked
@@ -447,9 +485,9 @@ case "$state" in
     # sound that the green dot was on screen — and it fires once per agent batch, which
     # is how the chime gets switched off entirely. The turn that ends AFTER the last
     # agent returns finds an empty ledger and rings then, which is the beat the user
-    # actually waits for. Background Bash commands (T312's await) are NOT covered here:
-    # they leave no ledger entry, only a live shell the app discovers by probing.
-    [ -s "$bgfile" ] || { play_state_sound done Glass; push_watch done; } ;;
+    # actually waits for. Background Bash commands (T312's await) get the same gate via
+    # bg_shells_running, which probes for their live shells the way the app does.
+    [ -s "$bgfile" ] || bg_shells_running || { play_state_sound done Glass; push_watch done; } ;;
   needs) play_state_sound needs Funk; push_watch needs ;;
 esac
 

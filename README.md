@@ -3,9 +3,60 @@
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?logo=apple)](https://spectix.app)
 [![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
 
-Menu bar status for every Claude Code & Codex session — running, done, waiting for you — and one click to its exact terminal.
+**See which Claude Code or Codex session is waiting for you, and click straight to its terminal.**
+
+Run five sessions at once and one of them is always sitting on a permission prompt you haven't seen. SpectiX lives in the menu bar, puts the sessions that need you at the top, and takes you to the exact terminal — down to the pane inside VS Code — in one click.
 
 ![Click a session in SpectiX and land in its VS Code terminal pane, ringed](docs/demo.gif)
+
+**[Download for macOS](https://spectix.app)** · free · notarized installer · [▶ 97-second tour](https://spectix.app/assets/spectix-tour.mp4)
+
+## See it in action
+
+**One click to the right terminal.** Terminal, iTerm2, VS Code, Cursor or Windsurf comes to the front, ringed in the session's status colour so you see where you landed.
+
+<p align="center">
+  <img src="docs/media/jump.gif" width="720" alt="Clicking a session row brings its Terminal window forward with a breathing status-colored ring">
+</p>
+
+**The exact pane inside VS Code.** With several terminals in one window, SpectiX switches to the one that session runs in.
+
+<p align="center">
+  <img src="docs/media/vscode.gif" width="720" alt="Clicking a session row brings VS Code forward and switches to that session's terminal pane, ringed">
+</p>
+
+**A tap on the shoulder when it needs you.** A toast appears when a session finishes or needs you; `⌃⌥⌘N` jumps to the next one waiting, from anywhere.
+
+<p align="center">
+  <img src="docs/media/attention.gif" width="720" alt="A needs-you toast slides in, the global hotkey jumps to the terminal waiting on a permission prompt, and the toast turns into a check mark once answered">
+</p>
+
+## Also in the menu bar
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/media/live.gif" alt="SpectiX session list grouped by project, rows switching between working, needs you, done and idle, with time, tokens, context and model"><br>
+      <b>Every session, live</b> — grouped by project, with time, tokens, context used and model.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/media/header.gif" alt="Hovering the header columns: this Mac's CPU and memory load, then Claude and Codex 5-hour and weekly quota with reset countdowns"><br>
+      <b>Quota at a glance</b> — Claude and Codex 5-hour and weekly limits with reset countdowns, plus CPU and memory.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/media/accounts.gif" alt="Account panel listing remembered Claude accounts with plan and quota bars, switching to another account"><br>
+      <b>Switch accounts</b> without signing in again; new terminals use the one you pick.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/media/tabs.gif" alt="The Stats, Recent projects and Skills tabs"><br>
+      <b>Stats, recent projects and skills</b> — today's activity, one-click reopen, and how often each skill is used.
+    </td>
+  </tr>
+</table>
+
+Plus **quick actions**: one-click tiles for your own scripts, Claude skills or prompts, which your AI can add for you, and **project groups** for features that span several repositories.
 
 <p align="center">
   <a href="https://spectix.app/assets/spectix-tour.mp4">
@@ -15,139 +66,49 @@ Menu bar status for every Claude Code & Codex session — running, done, waiting
   <a href="https://spectix.app/assets/spectix-tour.mp4">▶ Watch the 97-second tour (with sound)</a>
 </p>
 
-**Download:** https://spectix.app
-
-Pure Swift + Cocoa, single binary, no third-party dependencies. macOS 13+.
-
-## What it does
-
-### Every session, live
-
-Each Claude Code and Codex session shows up as a row, grouped by project: working, needs you, done, or idle. Every row also shows elapsed time, tokens, how much context is used, and which model is running.
-
-<p align="center">
-  <img src="docs/media/live.gif" width="300" alt="SpectiX session list grouped by project, rows switching between working, needs you, done and idle, with time, tokens, context and model">
-</p>
-
-### One click to the right terminal
-
-Click a row and its terminal window comes to the front, outlined by a ring in the session's status color, so you see at once where you landed.
-
-<p align="center">
-  <img src="docs/media/jump.gif" width="720" alt="Clicking a session row brings its Terminal window forward with a breathing status-colored ring">
-</p>
-
-### The exact pane inside VS Code
-
-With several terminals open in one VS Code window, SpectiX switches to the exact terminal that session runs in — not just the window.
-
-<p align="center">
-  <img src="docs/media/vscode.gif" width="720" alt="Clicking a session row brings VS Code forward and switches to that session's terminal pane, ringed">
-</p>
-
-### A tap on the shoulder when it needs you
-
-A toast appears when a session finishes or needs you. Press `⌃⌥⌘N` from anywhere to jump to the next one waiting; once you answer, the toast turns into a ✓.
-
-<p align="center">
-  <img src="docs/media/attention.gif" width="720" alt="A needs-you toast slides in, the global hotkey jumps to the terminal waiting on a permission prompt, and the toast turns into a check mark once answered">
-</p>
-
-### Machine load and subscription quota
-
-The header shows how busy this Mac is (CPU and memory — click to open Activity Monitor), plus your Claude and Codex quota for the 5-hour and weekly windows with countdowns to the next reset.
-
-<p align="center">
-  <img src="docs/media/header.gif" width="300" alt="Hovering the header columns: this Mac's CPU and memory load, then Claude and Codex 5-hour and weekly quota with reset countdowns">
-</p>
-
-### Switch accounts without signing in again
-
-Open the Claude or Codex account card to see the accounts you have used, each with its plan and quota. Pick another one and newly opened terminals use it — no new sign-in.
-
-<p align="center">
-  <img src="docs/media/accounts.gif" width="300" alt="Account panel listing remembered Claude accounts with plan and quota bars, switching to another account">
-</p>
-
-### Stats, recent projects and skills
-
-**Stats** shows today's activity — sessions, active time, estimated cost, the week's quota, and token use by day and by hour. **Recent** reopens a project folder in one click. **Skills** lists every Claude and Codex skill and agent with how many times each was used.
-
-<p align="center">
-  <img src="docs/media/tabs.gif" width="300" alt="The Stats, Recent projects and Skills tabs">
-</p>
-
 ## Install
 
-- **Signed build:** download from https://spectix.app. The installer places `SpectiX.app`, the hook scripts, and the companion VS Code extension.
-- **From source:** see below.
-- **What changed in each release:** [CHANGELOG.md](CHANGELOG.md).
+Download the installer from **[spectix.app](https://spectix.app)**, open `Install SpectiX.app` and click Install. It places the app, the Claude Code / Codex hooks and the companion VS Code extension. Requires macOS 13 or later.
 
-## Build from source
+On first jump macOS asks for **Accessibility** — the only permission SpectiX needs. It uses it to raise the target window and find the right terminal pane. Screen Recording is never requested.
 
-Requirements: macOS 13+ and the Xcode Command Line Tools (`xcode-select --install`). Full Xcode is not needed.
-
-```bash
-git clone https://github.com/spectix-app/SpectiX.git
-cd SpectiX
-./tools/setup-signing-cert.sh   # optional, one time — see tip below
-./build.sh                      # produces "SpectiX Dev.app"
-open "SpectiX Dev.app"
-```
-
-Then wire the hooks: either run `/plugin marketplace add spectix-app/SpectiX` and `/plugin install spectix@spectix` inside Claude Code, or add `hooks/spectix-status.sh` to `~/.claude/settings.json` by hand — see [`plugin/README.md`](plugin/README.md) for the hook list (use one path, not both). And, for pane-level jumping in VS Code, run `./vscode-extension/install.sh` and reload the VS Code window.
-
-**Signing tip:** without a signing identity, `build.sh` falls back to ad-hoc signing, which changes the code signature on every build, so macOS forgets the Accessibility grant and asks again after each rebuild. `tools/setup-signing-cert.sh` creates a stable self-signed identity named "SpectiX Dev" in your login keychain; `build.sh` uses it automatically and the grant survives rebuilds.
-
-## How it works
-
-1. Claude Code / Codex hooks call `hooks/spectix-status.sh` on each event (prompt submitted, tool use, permission request, stop, session start).
-2. The script walks up the process tree to find the session's controlling **tty** and writes a plain-text state file: `~/.claude/spectix/state-<tty>` (`working` / `done` / `needs` / `idle`), plus the current step and title.
-3. The app enumerates live `claude` / `codex` processes, reads the state file for each one's tty, and corrects known hook blind spots with process-tree probing and the Claude Code daemon's session status.
-
-State is keyed by tty because it is unique per terminal and stable for its whole life; environment variables and session ids are not (they are shared within one VS Code window, or change mid-process).
-Architecture details (in Chinese): [`docs/session-status.md`](docs/session-status.md).
-
-## Permissions
-
-SpectiX needs one system permission: **Accessibility**. It uses it to raise the target window on a jump, locate the exact terminal pane, read VS Code window titles to match jump targets, and detect whether the Claude desktop app is generating a reply. Screen Recording is not requested.
+What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Privacy: no network
 
-The SpectiX app binary opens no network connection. This is enforced at build time: `build.sh` refuses to compile if any networking API (`URLSession`, `CFNetwork`, `NWConnection`, `socket(`, …) appears in the sources, and refuses again if the linked binary pulls in a network library.
+The SpectiX app binary opens no network connection, and the build enforces it: `build.sh` refuses to compile if any networking API appears in the sources, or if the linked binary pulls in a network library. Two opt-in features reach the network through a separate `curl` process, only when you ask — Apple Watch push via Bark (off until you enter a key) and the account panel's refresh button.
 
-The only outbound traffic is optional, triggered by you, and made by separate processes:
-
-- **Apple Watch push (Bark):** off unless you enter a Bark key; the hook script sends it with `curl`.
-- **Account panel:** only when you press its refresh button (or click another Claude account to switch to it), the app spawns `/usr/bin/curl` to fetch that account's quota from Anthropic. Never on a timer or at launch.
-
-Verify it yourself:
+Check it yourself:
 
 ```bash
 otool -L "/Applications/SpectiX.app/Contents/MacOS/SpectiX"   # no CFNetwork, Network.framework, libcurl, libssl
 lsof -i -a -p $(pgrep -x SpectiX)                            # no output while running
-ls ~/.claude/spectix/                                         # everything the hooks write is plain text
 ```
 
-An outbound firewall such as [Little Snitch](https://obdev.at/products/littlesnitch) or [LuLu](https://objective-see.org/products/lulu.html) will only ever see `curl` connections from the two opt-in paths above.
+Full details: [spectix.app/privacy](https://spectix.app/privacy).
 
-## Contributing
+## How it works
 
-SpectiX is source-available but not open to code contributions: pull requests are closed without review. Bug reports and ideas are very welcome as [issues](https://github.com/spectix-app/SpectiX/issues/new/choose). See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
+Claude Code and Codex hooks call `hooks/spectix-status.sh` on each event. It finds the session's terminal (tty) and writes a plain-text state file to `~/.claude/spectix/`. The app reads those files for every live session and fills the hooks' blind spots from the process tree. Details (in Chinese): [docs/session-status.md](docs/session-status.md).
+
+## Build from source
+
+Needs macOS 13+ and the Xcode Command Line Tools.
+
+```bash
+git clone https://github.com/spectix-app/SpectiX.git && cd SpectiX
+./tools/setup-signing-cert.sh   # optional, keeps the Accessibility grant across rebuilds
+./build.sh && open "SpectiX Dev.app"
+```
+
+Then wire the hooks with `/plugin marketplace add spectix-app/SpectiX` and `/plugin install spectix@spectix` inside Claude Code (or by hand, see [plugin/README.md](plugin/README.md)), and run `./vscode-extension/install.sh` for pane-level jumps in VS Code.
 
 ## License
 
-SpectiX is source-available under the Functional Source License ([FSL-1.1-ALv2](LICENSE)). Use it free — personally or at work. You may not sell it or ship a competing product built from it. Every release becomes Apache-2.0 open source two years after it ships. Versions 1.9 and earlier were released under GPL-3.0.
+Source-available under the Functional Source License ([FSL-1.1-ALv2](LICENSE)): free to use, personally or at work; you may not sell it or ship a competing product built from it. Each release becomes Apache-2.0 two years after it ships. Versions 1.9 and earlier were GPL-3.0. The "SpectiX" name and logo are not licensed for forks.
 
-The "SpectiX" name and logo are not licensed for use by forks; please rename and rebrand if you distribute a modified version.
+Pull requests are closed without review, but bug reports and ideas are very welcome as [issues](https://github.com/spectix-app/SpectiX/issues/new/choose) — see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
 
-## Third-party assets
+The two break-reminder photos are used under the [Pexels License](https://www.pexels.com/license/): [Tamba Budiarsana](https://www.pexels.com/photo/979247/) (`tools/cat-stretch.jpg`) and [Pet foto](https://www.pexels.com/photo/17753986/) (`tools/cat-glasses.jpg`).
 
-The two photos used by the break reminder are not covered by the SpectiX license. They are used under the [Pexels License](https://www.pexels.com/license/):
-
-- `tools/cat-stretch.jpg`: photo by Tamba Budiarsana, https://www.pexels.com/photo/979247/
-- `tools/cat-glasses.jpg`: photo by Pet foto, https://www.pexels.com/photo/17753986/
-
-## Disclaimer
-
-SpectiX is an independent project by SpectiX Lab and is not affiliated with, endorsed by, or sponsored by Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic, PBC. Codex is a trademark of OpenAI.
+SpectiX is an independent project by SpectiX Lab, not affiliated with Anthropic or OpenAI. Claude and Claude Code are trademarks of Anthropic, PBC; Codex is a trademark of OpenAI.
