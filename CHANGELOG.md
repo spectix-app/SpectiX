@@ -2,6 +2,19 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.19 — Close a session’s terminal from its row (2026-11-05)
+
+Verified on Claude Code 2.1.318.
+
+### New
+
+- **Close Terminal** — right-click a session row to close the terminal it runs in, without hunting for the window first. SpectiX asks you to confirm, and warns you when that session is still working. In Terminal it closes the window, or just that tab when the window holds several; in iTerm it closes the session.
+- In VS Code, Cursor and Windsurf it closes that one terminal pane and leaves the rest of the window alone. This needs the companion extension from this release, so reload your editor window once after installing. In any other terminal app SpectiX ends the session’s processes and leaves the window to that app.
+
+### Fixed
+
+- The done sound played whenever Claude Code paused while a command was still running in the background, so a session waiting on a long build chimed once for every command it was waiting on. It now stays quiet until those background commands have finished and the session has really stopped.
+
 ## 1.18 — Group the projects that make up one feature (2026-11-03)
 
 Verified on Claude Code 2.1.314.

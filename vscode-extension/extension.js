@@ -19,6 +19,9 @@ const FOCUS_DIR = path.join(os.homedir(), '.claude', 'spectix');
 const FOCUS_FILE = 'focus-request';
 const ACTIVE_FILE = 'active-terminal';
 const OPEN_TERM_FILE = 'open-terminal-request';
+// Same broadcast as focus-request: "<shell pid>:<nonce>"; the window owning that
+// terminal disposes it (row right-click → 关闭终端).
+const CLOSE_FILE = 'close-request';
 // Same broadcast trick for the Claude Code chat panel (sidebar / tab / window), which
 // is not a terminal and so can't be revealed by pid. The app writes the pid of the
 // extension host that owns the panel; every window reads it and only the one whose
@@ -68,6 +71,13 @@ function activate(context) {
   watcher.onDidCreate(handleFocusRequest);
   watcher.onDidChange(handleFocusRequest);
   context.subscriptions.push(watcher);
+
+  const closeWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(FOCUS_DIR), CLOSE_FILE)
+  );
+  closeWatcher.onDidCreate(handleCloseRequest);
+  closeWatcher.onDidChange(handleCloseRequest);
+  context.subscriptions.push(closeWatcher);
 
   const chatWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(FOCUS_DIR), CHAT_FOCUS_FILE)
@@ -223,6 +233,32 @@ async function handleFocusRequest() {
   // so the watcher fires even when the same session is focused twice in a row.
   const pid = parseInt(text.split(':')[0].trim(), 10);
   if (Number.isInteger(pid)) focusByPid(pid);
+}
+
+async function handleCloseRequest() {
+  let text;
+  try {
+    const bytes = await vscode.workspace.fs.readFile(
+      vscode.Uri.file(path.join(FOCUS_DIR, CLOSE_FILE))
+    );
+    text = Buffer.from(bytes).toString('utf8');
+  } catch {
+    return;
+  }
+  const pid = parseInt(text.split(':')[0].trim(), 10);
+  if (!Number.isInteger(pid)) return;
+  for (const term of vscode.window.terminals) {
+    let tpid;
+    try {
+      tpid = await term.processId;
+    } catch {
+      continue;
+    }
+    if (tpid === pid) {
+      term.dispose();
+      return;
+    }
+  }
 }
 
 // Focus this window's Claude Code chat input when the request names our extension

@@ -184,3 +184,20 @@ pane 路径上所有按 pid 对账的东西——扩展的 `term.show`、`verify
 ### ★ 为什么必须缓存 AXUIElement（血泪，改这块前必读）
 
 从后台 App（`LSUIElement`）**没有别的办法**视觉切到离屏窗口的 Space。逐一实测失败：① `CGSManagedDisplaySetCurrentSpace`（`switchToSpace`）后台调用**只翻 WindowServer 当前-Space 标志位，物理屏不切** → 随后前置动作把窗口显示到屏幕实际所在 Space = **拖窗**；② `_SLPSSetFrontProcessWithOptions`（SLPS）对离屏窗口单独调不触发视觉切换；③ `NSRunningApplication.activate()` 跨-App 激活 macOS 不跟随切 Space（只有 App **自激活**才跟随，故主窗口 `NSApp.activate` / 原生 Terminal `osascript activate` 能切、跨 App 激活 VSCode 不能），且无法把离屏窗口设为前台；④ 扩展 `term.show(false)` 的 `window.focus()` 跨 Space 即拖窗。**唯一可行**：`kAXWindowsAttribute` 只列当前 Space 窗口，但把 element **引用留存**（`scanVSCodeWindows` 存进 `vscodeAXCache`），窗口移走后引用仍有效，`kAXRaiseAction` 它会切 Space + 置顶。缓存随刷新累积、不持久化（跨进程失效，重启第一轮重填）。见 `main.swift` `raiseEditorWindow` / `scanVSCodeWindows` / `focus`。
+
+## 右键会话行 → 关闭终端（T390，改 `TerminalCloser.swift` 前必读）
+
+和跳转共用同一套「这一行住在哪」的判定（`terminalApp` / `editor`），但关的手段每种宿主不一样：
+
+| 宿主 | 怎么关 |
+|---|---|
+| Terminal.app | 先结束进程 → 单独窗口用 AppleScript `close window id` 静默关掉；**多标签窗口里的一个标签，`close` 没反应**，只能把 Terminal 切到前台、选中那个标签、用辅助功能按菜单里 ⌘W 那一项（Terminal 在后台时这项是灰的） |
+| iTerm | AppleScript `close s`（本机没装 iTerm，**未实测**） |
+| VS Code / Cursor / Windsurf | 写 `close-request`（和 `focus-request` 同一套广播），扩展 ≥ 0.0.9 找到 `processId` 对上的终端 `dispose()`；旧扩展收不到，靠下面的结束进程兜底 |
+| 其它（Warp、Ghostty…） | 只结束进程，窗口留不留由那个终端自己决定 |
+
+- **★ 进程必须先杀干净再按 ⌘W**，否则 Terminal 弹「要终止这个标签里运行的进程吗」。先 HUP，1 秒内没死光再 KILL —— 交互式 zsh 和 `login` 都不理 HUP（2026-11-04 实测）
+- **★ 别用 `pkill -t` / `pgrep -t`**：这台 macOS 26 上按 tty 一个进程都匹配不到（`ps -t` 却正常），进程列表直接用 `sysctl(KERN_PROC_TTY)` 问内核
+- **★ Terminal 的 AppleScript 把每个标签都当成一个独立窗口**（`count of tabs of w` 永远是 1），所以标签要在杀进程**之前**按「tty + 还有进程」定位成窗口 id —— 死掉的标签还挂着原来的 tty，tty 被复用时会认错
+- **★ 菜单项按快捷键找，不按标题找**：⌘W 在单窗口时叫 Close Window、多标签时叫 Close Tab，界面是中文时标题又不一样
+- 演示模式、桌面版行、聊天面板行没有这个菜单项（`TerminalCloser.canClose`）

@@ -1012,6 +1012,7 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     private func contextMenu(forRow row: Int) -> NSMenu? {
         guard row >= 0, row < items.count else { return nil }
         if case .group(let id, let name, _, _, _) = items[row] { return groupMenu(id: id, name: name) }
+        if case .child(let r) = items[row] { return sessionMenu(r) }
         // Only project headers get a menu; a status bucket isn't a project.
         guard case .header(let folder, let kind, _, _) = items[row],
               let cwd = kind.projectCwd else { return nil }
@@ -1054,6 +1055,41 @@ final class SessionListView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         item.representedObject = ["cwd": cwd, "folder": display]
         menu.addItem(item)
         return menu
+    }
+
+    private func sessionMenu(_ r: SessionRow) -> NSMenu? {
+        guard TerminalCloser.canClose(r) else { return nil }
+        let menu = NSMenu()
+        let close = NSMenuItem(title: L("关闭终端…", "Close Terminal…"),
+                               action: #selector(closeTerminalClicked(_:)), keyEquivalent: "")
+        close.target = self
+        close.representedObject = r.id
+        menu.addItem(close)
+        return menu
+    }
+
+    @objc private func closeTerminalClicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let r = items.lazy.compactMap({ item -> SessionRow? in
+                  if case .child(let r) = item, r.id == id { return r }
+                  return nil
+              }).first else { return }
+        let alert = NSAlert()
+        alert.messageText = L("关闭这个终端？", "Close this terminal?")
+        let running = r.status == "working"
+        alert.informativeText = r.display + "\n\n" + (running
+            ? L("这个会话还在运行，关掉会中断它，无法撤销。", "This session is still running. Closing it stops the work and can't be undone.")
+            : L("终端里的会话会一起结束，无法撤销。", "The session in it ends too. This can't be undone."))
+        if running { alert.alertStyle = .warning }
+        alert.addButton(withTitle: L("关闭", "Close"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+        alert.buttons[0].hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        PopoverHold.begin()
+        let ok = alert.runModal() == .alertFirstButtonReturn
+        PopoverHold.end()
+        guard ok else { return }
+        TerminalCloser.close(r)
     }
 
     private func groupTitle(above row: Int) -> DisplayItem? {
