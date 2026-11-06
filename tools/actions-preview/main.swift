@@ -6,12 +6,14 @@ import Cocoa
 // column hovers the first tile. detail-*.png shows the detail page never-run / running
 // (live output) / failed, driven by real runs of throwaway scripts; editor-*.png is the
 // add / edit page inside the drawer (new script · a skill · the list searched · a sub-skill);
-// connect-*.png is the Connect AI page at both widths.
+// connect-*.png is the Connect AI page at both widths; timed-*.png is the Scheduled page
+// (real ~/Library/LaunchAgents + scheduled actions) at both widths.
 
 let widths: [CGFloat] = [384, 468]
 
 func render(width: CGFloat, look: NSAppearance, hoverFirst: Bool, detail: QuickAction? = nil,
-            form: QuickAction?? = nil, search: String? = nil, aiPage: Bool = false) -> NSBitmapImageRep? {
+            form: QuickAction?? = nil, search: String? = nil, aiPage: Bool = false,
+            timed: Bool = false) -> NSBitmapImageRep? {
     let win = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: width, height: 400),
                        styleMask: [.borderless], backing: .buffered, defer: false)
     win.appearance = look
@@ -34,8 +36,12 @@ func render(width: CGFloat, look: NSAppearance, hoverFirst: Bool, detail: QuickA
     drawer.prepareForShow()
     if let detail { drawer.showDetail(detail) }
     if aiPage { drawer.showAIPage() }
-    // Registration is read off the main thread; let it land before the shot.
-    for _ in 0..<(aiPage ? 15 : 3) { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+    if timed, let seg = firstView(drawer, NSSegmentedControl.self) {
+        seg.selectedSegment = 1
+        seg.sendAction(seg.action, to: seg.target)
+    }
+    // Registration and launchd jobs are read off the main thread; let them land before the shot.
+    for _ in 0..<(aiPage || timed ? 15 : 3) { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
     if let form {
         drawer.showForm(form)
         // The skill list loads off the main thread.
@@ -135,13 +141,18 @@ for spec in ThemeRegistry.all {
             let skill = QuickAction(id: "preview-skill", emoji: "☀️", name: "Morning", kind: .skill, body: "/morning today")
             // A skill filed inside an entry skill (~/.claude/skills/notes/daily-report).
             let sub = QuickAction(id: "preview-sub", emoji: "📰", name: "早报", kind: .skill, body: "/notes daily-report today")
+            let timedForm = QuickAction(id: "preview-timed", emoji: "📊", name: "看下载数", kind: .script, body: "tools/downloads.sh",
+                                        confirm: true, schedule: .daily(6, 0, days: [1, 2, 3, 4, 5]))
             let forms = [render(width: 384, look: look, hoverFirst: false, form: .some(nil)),
                          render(width: 384, look: look, hoverFirst: false, form: skill),
                          render(width: 384, look: look, hoverFirst: false, form: skill, search: "task"),
-                         render(width: 384, look: look, hoverFirst: false, form: sub, search: "daily")].compactMap { $0 }
+                         render(width: 384, look: look, hoverFirst: false, form: sub, search: "daily"),
+                         render(width: 384, look: look, hoverFirst: false, form: timedForm)].compactMap { $0 }
             try? row(forms)?.write(to: URL(fileURLWithPath: "\(outDir)/editor-\(lookName).png"))
             let connect = widths.compactMap { render(width: $0, look: look, hoverFirst: false, aiPage: true) }
             try? row(connect)?.write(to: URL(fileURLWithPath: "\(outDir)/connect-\(lookName).png"))
+            let timedShots = widths.compactMap { render(width: $0, look: look, hoverFirst: false, timed: true) }
+            try? row(timedShots)?.write(to: URL(fileURLWithPath: "\(outDir)/timed-\(lookName).png"))
         }
     }
 }

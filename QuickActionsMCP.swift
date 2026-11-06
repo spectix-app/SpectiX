@@ -33,7 +33,7 @@ enum QuickActionsMCP {
                     "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                     "capabilities": ["tools": [String: Any]()],
                     "serverInfo": ["name": "spectix", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"],
-                    "instructions": "Buttons in the SpectiX menu-bar app's quick-actions drawer (the wrench). Each runs a shell script, a Claude Code skill, or a prompt for Claude when the user clicks it.",
+                    "instructions": "Buttons in the SpectiX menu-bar app's quick-actions drawer (the wrench). Each runs a shell script, a Claude Code skill, or a prompt for Claude when the user clicks it, or on its own schedule (see the schedule field).",
                 ])
             case "ping":
                 reply(id: id, result: [:])
@@ -64,6 +64,10 @@ enum QuickActionsMCP {
                 "description": "Optional folder to run in. Leave out to run in SpectiX's own folder (recommended); use a project path to work on that project. Never ~ (Claude starting in the home folder triggers macOS permission prompts)"],
         "inTerminal": ["type": "boolean", "description": "Optional: true = open a Terminal window (when the user must interact); default runs in the background and notifies"],
         "confirm": ["type": "boolean", "description": "Optional: true = ask the user before each run (use for anything destructive)"],
+        "schedule": ["type": "object",
+                     "description": "Optional: run on its own while SpectiX is open. {\"every\": 30} = every 30 minutes on the clock (minimum 5, 60 = hourly); {\"at\": \"06:00\"} = daily; {\"at\": \"06:00\", \"days\": [1,2,3,4,5]} = those weekdays (1 = Monday … 7 = Sunday). {} = manual only. Timed runs skip the confirm prompt",
+                     "properties": ["every": ["type": "integer"], "at": ["type": "string"],
+                                    "days": ["type": "array", "items": ["type": "integer"]]]],
     ]
 
     private static var tools: [[String: Any]] {
@@ -100,7 +104,7 @@ enum QuickActionsMCP {
             var id = slug(name)
             while list.contains(where: { $0.key == id }) { id += "-" + UUID().uuidString.prefix(4).lowercased() }
             var action = QuickAction(id: id, name: name, kind: kind, body: body)
-            apply(a, to: &action)
+            if let bad = apply(a, to: &action) { return (bad, true) }
             return save(list + [action], done: "Added “\(name)” (id \(id)). It is in the drawer now.")
 
         case "update_quick_action":
@@ -114,7 +118,7 @@ enum QuickActionsMCP {
                 guard let kind = QuickAction.Kind(rawValue: k) else { return ("kind must be script, skill or prompt.", true) }
                 action.kind = kind
             }
-            apply(a, to: &action)
+            if let bad = apply(a, to: &action) { return (bad, true) }
             var next = list
             next[i] = action
             return save(next, done: "Updated “\(action.name)”.")
@@ -131,12 +135,22 @@ enum QuickActionsMCP {
     }
 
     /// Optional fields; a skill body is stored the way the drawer writes it ("/name …").
-    private static func apply(_ a: [String: Any], to action: inout QuickAction) {
+    /// Returns an error message for a schedule it can't use.
+    private static func apply(_ a: [String: Any], to action: inout QuickAction) -> String? {
         if let e = a["emoji"] as? String { action.emoji = e.isEmpty ? nil : e }
         if let c = a["cwd"] as? String { action.cwd = c.isEmpty ? nil : c }
         if let t = a["inTerminal"] as? Bool { action.inTerminal = t ? true : nil }
         if let c = a["confirm"] as? Bool { action.confirm = c ? true : nil }
         if action.kind == .skill, !action.body.hasPrefix("/") { action.body = "/" + action.body }
+        if let raw = a["schedule"] as? [String: Any] {
+            guard !raw.isEmpty else { action.schedule = nil; return nil }
+            guard let data = try? JSONSerialization.data(withJSONObject: raw),
+                  let s = try? JSONDecoder().decode(QuickActionSchedule.self, from: data), s.isValid else {
+                return "schedule must be {\"every\": N} with N ≥ \(QuickActionSchedule.minEvery), or {\"at\": \"HH:MM\"} with optional \"days\" (1 = Monday … 7 = Sunday)."
+            }
+            action.schedule = s
+        }
+        return nil
     }
 
     private static func nonEmpty(_ v: Any?) -> String? {

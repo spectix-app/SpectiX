@@ -2,6 +2,16 @@
 
 Every release, newest first. Also at https://spectix.app/changelog/
 
+## 1.20 — Quick actions that run on a timetable (2026-11-05)
+
+Verified on Claude Code 2.1.318.
+
+### New
+
+- **What time to run** — a quick action can now run by itself: every few minutes, hourly, daily at a set time, or on chosen weekdays. The edit page shows when it will run next, and a small clock sits on the tile. Scheduled actions run while SpectiX is open and do not ask first; if your Mac was asleep at the time, the action runs once when it wakes rather than once for every run it missed.
+- **Scheduled** — the quick-actions drawer has a second page, beside Buttons, listing everything that runs on a timetable in order of what runs next: your scheduled actions and the launchd jobs in `~/Library/LaunchAgents`, your own first and those other apps installed folded away. A job shows its schedule, whether it is running and how its last run went.
+- Click a job to run it once, change its time, turn it off or on, open its log, or show it in Finder. Changing the time rewrites only the schedule in that job’s file; turning it off renames the file to `.plist.disabled`, the same way you would by hand. Your AI can now set schedules too when it adds or edits a quick action for you.
+
 ## 1.19 — Close a session’s terminal from its row (2026-11-05)
 
 Verified on Claude Code 2.1.318.

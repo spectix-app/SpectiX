@@ -1408,6 +1408,7 @@ class AppController: NSObject, NSApplicationDelegate {
         // BEFORE the watchers below, or the first session after a fresh copy reports
         // nothing until the next launch.
         bootstrapHooks()
+        QuickActionScheduler.shared.start()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "…"

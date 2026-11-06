@@ -66,6 +66,23 @@ enum Demo {
         }
     }
 
+    /// Stand-ins for ~/Library/LaunchAgents: a recording must not show the user's real jobs.
+    static let launchJobs: [LaunchJob] = [
+        LaunchJob(path: "/demo/com.acme.backup.plist", label: "com.acme.backup", program: ["/usr/local/bin/backup"],
+                  enabled: true, timing: .schedule(.daily(2, 30), interval: false), logPath: nil, own: true),
+        LaunchJob(path: "/demo/com.acme.sync.plist", label: "com.acme.sync", program: ["/usr/local/bin/sync"],
+                  enabled: true, timing: .schedule(.everyMinutes(15), interval: true), logPath: nil, own: true),
+        LaunchJob(path: "/demo/com.acme.watcher.plist", label: "com.acme.watcher", program: ["/usr/local/bin/watch"],
+                  enabled: true, timing: .keepAlive, logPath: nil, own: true),
+        LaunchJob(path: "/demo/com.acme.digest.plist.disabled", label: "com.acme.digest", program: ["/usr/local/bin/digest"],
+                  enabled: false, timing: .schedule(.daily(7, 0, days: [1, 2, 3, 4, 5]), interval: false), logPath: nil, own: true),
+    ]
+    static let launchStatus: [String: LaunchAgents.Status] = [
+        "com.acme.backup": .init(pid: nil, lastExit: 0),
+        "com.acme.sync": .init(pid: nil, lastExit: 0),
+        "com.acme.watcher": .init(pid: 4242, lastExit: 0),
+    ]
+
     // MARK: Clock
 
     private static var t0 = Date().timeIntervalSince1970

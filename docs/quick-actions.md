@@ -42,6 +42,7 @@
 | `cwd` | | 在哪个文件夹跑，支持 `~`；**不填 = SpectiX 自己的文件夹 `~/.claude/spectix/actions/workspace`**（跑出来的文件都留在这，卸载时随 `~/.claude/spectix` 一起删）。skill 读的是这个目录的 CLAUDE.md / `.claude/skills` |
 | `inTerminal` | | `true` = 开 Terminal 新窗口跑（交互式 `claude "<prompt>"`，确认框在那个窗口里回答）；默认后台 |
 | `confirm` | | `true` = 运行前弹一次确认 |
+| `schedule` | | 到点自己跑，写法见下面「定时」一节；不写 = 只手动 |
 
 **文件写坏了**（JSON 解析失败）抽屉顶部会出一行橙字，方块保持上次读到的那份，不会清空。
 
@@ -66,6 +67,36 @@
 - **子 skill 也列出来**（2026-10-27 用户要求）：总入口 skill 文件夹里再往下一层的 `<子名>/SKILL.md`（如 `notes/daily-report`）排在它的总入口下面，标「在 notes 里」。Claude Code 只认第一层，`/daily-report` 跑不起来，所以选子 skill 存成 `/notes daily-report <那句话>`；读回来时 body 第二个词正好是这个总入口的子 skill 名，就认成选中它。只在表单里扫（`QuickActionForm.subSkills`），不进 `SkillCatalog`，「技能」tab 的计数不受影响；也不会进 Claude 每轮的 skill 清单。
 - 详情页（抽屉内翻页，「‹ 快捷动作」返回）：类型（Bash 脚本 · 不经过 AI / AI · Claude 跑 skill …）· 状态行（还没跑过 / 运行中 · 计时 / 上次成功·几分钟前·用时 / 上次失败·退出码 / 终端模式只记「几分钟前在终端打开」）· **跑什么**（`commandPreview`：真正会执行的那条命令，skill 显示成 `claude -p '/x' --permission-mode acceptEdits`）· 目录和跑法 · 输出（运行中每秒读一次 log 尾巴，显示最后 8 行）· 运行/停止 + 完整输出。计时和实时输出靠 runner 的 `didTick`（有任务在跑时每秒一次，跑完就停），和 `didChange` 分开是因为扳手收到 `didChange` 会重挂呼吸动画。
 - 弹窗每次重新弹出时抽屉收起；主窗口的抽屉保持开关状态。
+
+## 定时（T388，2026-11-04 用户要求，功能冻结期当面破例）
+
+设计稿 `design/quick-actions-schedule.html` 方案 2：抽屉标题下一个分段「按钮 N / 定时 M」。「按钮」页还是方块网格，设了定时的方块左上角一个小钟；「定时」页（`QuickActionTimedPage.swift`）一张表，把**会自己跑的**全列出来：SpectiX 按钮（标「按钮」）和系统定时任务（标 `SYS`）混排，常驻的排最前、其余按下次几点跑排、停用的排最后。
+
+### 按钮的定时：`schedule` 字段
+
+| 写法 | 意思 |
+|---|---|
+| 不写 | 只手动（老按钮不受影响） |
+| `{"every": 30}` | 每 30 分钟，**对齐钟点**（:00 :30）；最少 5；`60` = 每小时 |
+| `{"at": "06:00"}` | 每天 06:00 |
+| `{"at": "06:00", "days": [1,2,3,4,5]}` | 周一到周五 06:00（1 = 周一 … 7 = 周日） |
+
+- 编辑页「什么时候跑」（`QuickActionScheduleEditor`，在 `QuickActionSchedule.swift`）：只手动 / 每 N 分钟（5·10·15·30）/ 每小时 / 每天 / 每周几 + 时间，下面一行写「下次：明天 06:00」。**不做自定义 cron**（用户定）
+- **靠 App 自己计时**（`QuickActionScheduler`，每 30 秒看一次 + 睡醒时看一次）：SpectiX 没开就不跑。要关着 App 也跑，就写成系统定时任务
+- **错过的只补一次**：电脑睡着错过 6 点，醒来补跑一次，错过 10 次也只补 1 次；补跑在定时页那行写「醒来补跑」。账记在 `~/.claude/spectix/actions/schedule-state.json`（每个按钮：日程 · 算到哪了 · 上次到点跑的时刻）
+- **新设 / 改了日程从现在算起**，不会因为「今天 6 点已经过了」立刻跑一次
+- **到点跑不弹确认**（`run(_:scheduled: true)`）：`NSAlert.runModal` 会卡住主线程等一个可能不在电脑前的人，而设定时本身就是同意。编辑页勾了「运行前先问我」时那一行会写明。`inTerminal: true` 的照开 Terminal 窗口
+- 上一次还没跑完又到点了 → 这次跳过
+
+### 系统定时任务：`~/Library/LaunchAgents`（`LaunchAgents.swift`）
+
+- 扫 `*.plist` 和 `*.plist.disabled`。只直接列**自己的**（`isOwn`：程序参数里有 `~` 下的路径、不在 `~/Library`、不在 `.app` 里），别的软件装的折叠成最后一行「其他 N 个」
+- 状态取 `launchctl list`：⚠️ **正在跑的任务，Status 列是上一次的退出码**（todo-watch 在跑却显示 1）—— pid 有值就显示「在跑」，别显示失败。上次运行时间 = `StandardOutPath` 的修改时间，没配就不显示；`StartInterval` 的「下次」= 这个时间 + 间隔，同理没日志就不显示
+- 点一行进它的详情页：跑一次（`kickstart`）· 停用（`bootout` + 改名 `.plist.disabled`，和这台机器上原来停 today 的做法一致）· 启用（改回 + `bootstrap`）· **改时间**（只改 `StartInterval` / `StartCalendarInterval` 两个键，其余键和文件格式原样写回，加载着的就 bootout + bootstrap 重载）· 看日志 · 在 Finder 显示
+- 改不了的：多组时间等表达不了的日程标「自定义 · 打开文件改」，`KeepAlive` 常驻的只读
+- ⚠️ 某些任务的 plist 由别的工具生成（如 `~/.claude/bin/com.claude.today.plist` 是 today 的模板），**重装会冲掉在这里改的时间**
+- launchctl 都是 spawn 出去的子进程（`QuickActionRunner.capture`），不联网红线不受影响
+- 演示模式不读真文件，给 4 条假任务（`Demo.launchJobs`），所有写操作直接 return
 
 ## 没做的（有意砍掉）
 

@@ -19,6 +19,7 @@ struct QuickAction: Codable, Equatable {
     var cwd: String?
     var inTerminal: Bool?
     var confirm: Bool?
+    var schedule: QuickActionSchedule?
 
     var key: String { id ?? name }
     var icon: String? { emoji?.isEmpty == false ? emoji : nil }
@@ -136,6 +137,7 @@ final class QuickActionStore {
         - cwd：可选，在哪个文件夹跑；不写就在 SpectiX 自己的文件夹里跑（推荐）。处理某个项目时填项目路径。别填 ~：Claude 在主目录里启动会触发一串 macOS 权限弹窗
         - inTerminal：可选，true = 开终端窗口跑（需要我交互时用）；不写就是后台跑，跑完弹通知，通知里显示最后一行输出
         - confirm：可选，true = 运行前先弹窗确认；删除、重置这类改不回来的动作一定要加
+        - schedule：可选，SpectiX 开着时到点自己跑。{"every": 30} = 每 30 分钟（最少 5，60 = 每小时）；{"at": "06:00"} = 每天 6 点；{"at": "06:00", "days": [1,2,3,4,5]} = 周一到周五（1 = 周一 … 7 = 周日）。不写 = 只手动
         例子：\(example)
         script 里用到的命令行工具我没装的话，先告诉我怎么装。如果你改不了我电脑上的文件，就只回我这一个 JSON 对象，我粘贴进 SpectiX。
         我要的按钮：
@@ -151,6 +153,7 @@ final class QuickActionStore {
         - cwd: optional, folder to run in; leave it out to run in SpectiX's own folder (recommended). Use a project path to work on that project. Never ~: Claude starting in the home folder triggers a string of macOS permission prompts
         - inTerminal: optional, true = run in a Terminal window (when I need to interact); otherwise it runs in the background and notifies with the last output line
         - confirm: optional, true = ask before running; always set it for anything destructive
+        - schedule: optional, runs on its own while SpectiX is open. {"every": 30} = every 30 minutes (minimum 5, 60 = hourly); {"at": "06:00"} = daily at 6; {"at": "06:00", "days": [1,2,3,4,5]} = Monday to Friday (1 = Monday … 7 = Sunday). Leave out = manual only
         Example: \(example)
         If the script needs a CLI tool I may not have, tell me how to install it first. If you can't edit files on my machine, reply with just that one JSON object and I'll paste it into SpectiX.
         The button I want:
@@ -224,9 +227,11 @@ final class QuickActionRunner {
         post()
     }
 
-    func run(_ action: QuickAction) {
+    /// `scheduled`: fired by the timetable — nobody is there to answer a confirm alert,
+    /// and putting the action on a schedule already said yes.
+    func run(_ action: QuickAction, scheduled: Bool = false) {
         guard !isRunning(action.key) else { return }
-        if action.confirm == true {
+        if action.confirm == true, !scheduled {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             alert.messageText = L("运行「\(action.name)」？", "Run “\(action.name)”?")
@@ -392,6 +397,37 @@ final class QuickActionRunner {
         return pid
     }
 
+    // Run a command and return its stdout. Blocks, so call it off the main thread.
+    static func capture(_ argv: [String]) -> String? {
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return nil }
+        let readFD = fds[0], writeFD = fds[1]
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        posix_spawn_file_actions_adddup2(&actions, writeFD, STDOUT_FILENO)
+        posix_spawn_file_actions_addclose(&actions, readFD)
+        var cargv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
+        defer {
+            cargv.forEach { free($0) }
+            posix_spawn_file_actions_destroy(&actions)
+        }
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, argv[0], &actions, nil, &cargv, environ)
+        close(writeFD)
+        guard rc == 0 else { close(readFD); return nil }
+        var data = Data()
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: 4096, alignment: 1)
+        defer { buf.deallocate() }
+        while true {
+            let n = read(readFD, buf, 4096)
+            if n <= 0 { break }
+            data.append(Data(bytes: buf, count: n))
+        }
+        close(readFD)
+        waitpid(pid, nil, 0)
+        return String(data: data, encoding: .utf8)
+    }
+
     // MARK: Terminal
 
     // A .command file opened with Terminal: no Apple Events, so no Automation prompt.
@@ -492,6 +528,9 @@ final class QuickActionsDrawer: NSView {
     private let aiLink = NSButton(title: "", target: nil, action: nil)
     private let aiPage = MCPConnectPage()
     private let formScroll = NSScrollView()
+    private let pageSeg = NSSegmentedControl(labels: ["", ""], trackingMode: .selectOne, target: nil, action: nil)
+    private let timed = QuickActionTimedPage()
+    private var showsTimed: Bool { pageSeg.selectedSegment == 1 }
     static let columns = 3
 
     init() {
@@ -538,6 +577,17 @@ final class QuickActionsDrawer: NSView {
         head.setViews([title, aiLink, NSView(), editLink], in: .leading)
         head.orientation = .horizontal
         head.setCustomSpacing(8, after: title)
+        // Buttons grid / everything that runs on its own (design/quick-actions-schedule.html, scheme 2).
+        pageSeg.selectedSegment = 0
+        pageSeg.segmentDistribution = .fillEqually
+        pageSeg.target = self
+        pageSeg.action = #selector(pageChanged)
+        timed.isHidden = true
+        timed.onOpenAction = { [weak self] in self?.showDetail($0) }
+        timed.onLayoutChange = { [weak self] in
+            self?.updatePageLabels()
+            self?.onLayoutChange?()
+        }
         detail.isHidden = true
         detail.onBack = { [weak self] in self?.showDetail(nil) }
         detail.onEdit = { [weak self] in self?.showForm($0) }
@@ -547,7 +597,7 @@ final class QuickActionsDrawer: NSView {
         formScroll.hasVerticalScroller = true
         formScroll.autohidesScrollers = true
         formScroll.isHidden = true
-        let stack = NSStackView(views: [head, note, grid, detail, aiPage, formScroll])
+        let stack = NSStackView(views: [head, pageSeg, note, grid, timed, detail, aiPage, formScroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -565,6 +615,8 @@ final class QuickActionsDrawer: NSView {
             stack.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -10),
             head.widthAnchor.constraint(equalTo: stack.widthAnchor),
             grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            pageSeg.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            timed.widthAnchor.constraint(equalTo: stack.widthAnchor),
             note.widthAnchor.constraint(equalTo: stack.widthAnchor),
             aiPage.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -593,6 +645,7 @@ final class QuickActionsDrawer: NSView {
     func prepareForShow() {
         QuickActionStore.shared.reloadIfChanged()
         QuickActionRunner.shared.acknowledge()
+        LaunchAgents.shared.refresh()   // the "Scheduled N" label counts launchd jobs too
         aiPage.row.start()
         if formScroll.isHidden { showDetail(nil) }   // a half-filled form survives the popover closing
         refreshTiles()   // "✓ 3m ago" only ticks while something runs
@@ -613,17 +666,30 @@ final class QuickActionsDrawer: NSView {
     }
 
     private func show(detail showsDetail: Bool, form showsForm: Bool) {
+        let home = !showsDetail && !showsForm
         detail.isHidden = !showsDetail
         formScroll.isHidden = !showsForm
-        grid.isHidden = showsDetail || showsForm
-        head.isHidden = showsDetail || showsForm
+        grid.isHidden = !home || showsTimed
+        timed.isHidden = !home || !showsTimed
+        head.isHidden = !home
+        pageSeg.isHidden = !home
         aiPage.isHidden = true
+        if home, showsTimed { timed.prepareForShow() }
         onLayoutChange?()
+    }
+
+    @objc private func pageChanged() { show(detail: false, form: false) }
+
+    private func updatePageLabels() {
+        pageSeg.setLabel(L("按钮 \(QuickActionStore.shared.actions.count)", "Buttons \(QuickActionStore.shared.actions.count)"), forSegment: 0)
+        pageSeg.setLabel(L("定时 \(timed.count)", "Scheduled \(timed.count)"), forSegment: 1)
     }
 
     @objc func showAIPage() {
         show(detail: false, form: false)
         grid.isHidden = true
+        timed.isHidden = true
+        pageSeg.isHidden = true
         head.isHidden = true
         aiPage.isHidden = false
         aiPage.row.start()   // its timer stops while hidden
@@ -647,6 +713,7 @@ final class QuickActionsDrawer: NSView {
         let store = QuickActionStore.shared
         note.stringValue = store.loadError ?? ""
         note.isHidden = store.loadError == nil
+        updatePageLabels()
         var tiles: [NSView] = store.actions.map { a in
             let t = QuickActionTile(action: a)
             t.onOpen = { [weak self] in self?.showDetail($0) }
@@ -974,6 +1041,7 @@ final class QuickActionTile: NSView {
     private let icon = NSTextField(labelWithString: "")
     private let name = NSTextField(labelWithString: "")
     private let cornerTag = NSTextField(labelWithString: "")
+    private let clockBadge = NSImageView()
     private let strip = CAGradientLayer()
     private let hoverBar = NSView()
     private let runButton = NSButton()
@@ -1002,7 +1070,9 @@ final class QuickActionTile: NSView {
         name.alignment = .center
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        toolTip = action.map { "\($0.name)\n\($0.body)" }
+        toolTip = action.map { a in
+            [a.name, a.schedule.map { "⏰ " + $0.summary }, a.body].compactMap { $0 }.joined(separator: "\n")
+        }
         cornerTag.font = Theme.roundedMono(8, .heavy)
         cornerTag.alignment = .right
         cornerTag.isHidden = action == nil
@@ -1014,6 +1084,13 @@ final class QuickActionTile: NSView {
         addSubview(col)
         cornerTag.translatesAutoresizingMaskIntoConstraints = false
         addSubview(cornerTag)
+        // Top-left clock: this button also runs on a schedule.
+        clockBadge.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 8.5, weight: .bold))
+        clockBadge.contentTintColor = Theme.agentAccent
+        clockBadge.isHidden = action?.schedule?.isValid != true
+        clockBadge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(clockBadge)
 
         for (b, act) in [(runButton, #selector(runClicked)), (detailButton, #selector(detailClicked))] {
             b.isBordered = false
@@ -1041,7 +1118,9 @@ final class QuickActionTile: NSView {
             col.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
             cornerTag.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             cornerTag.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            cornerTag.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 6),
+            cornerTag.leadingAnchor.constraint(greaterThanOrEqualTo: clockBadge.trailingAnchor, constant: 3),
+            clockBadge.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            clockBadge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             hoverBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             hoverBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             hoverBar.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1252,6 +1331,7 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
                                               trackingMode: .selectOne, target: nil, action: nil)
     private let whereNote = NSTextField(wrappingLabelWithString: "")
     private let confirm = NSButton(checkboxWithTitle: L("运行前先问我一句", "Ask before running"), target: nil, action: nil)
+    private let scheduleEditor = QuickActionScheduleEditor()
     private let aiNote = NSTextField(wrappingLabelWithString: "")
     private let deleteButton = NSButton(title: L("删除", "Delete"), target: nil, action: nil)
     private var pastedID: String?
@@ -1376,6 +1456,8 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
 
         whereSeg.target = self
         whereSeg.action = #selector(whereChanged)
+        confirm.target = self
+        confirm.action = #selector(updateScheduleNote)
 
         deleteButton.target = self
         deleteButton.action = #selector(deleteAction)
@@ -1393,7 +1475,9 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
             Self.column([bodyLabel, bodyScroll, skillSearch, skillScroll, skillArgs, skillNote]),
             Self.column([Self.section(L("在哪跑", "Folder")), cwdRow, cwdNote]),
             Self.column([Self.section(L("怎么跑", "Run")), whereSeg, whereNote]),
-            confirm, buttons,
+            confirm,
+            Self.column([Self.section(L("什么时候跑", "When")), scheduleEditor]),
+            buttons,
         ], spacing: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -1719,6 +1803,8 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
         cwd.stringValue = a?.cwd ?? ""
         whereSeg.selectedSegment = a?.inTerminal == true ? 1 : 0
         confirm.state = a?.confirm == true ? .on : .off
+        scheduleEditor.schedule = a?.schedule
+        updateScheduleNote()
         autoCwd = nil
         updateCwdNote()
         kindChanged()
@@ -1754,6 +1840,15 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
                 "Opens a new Terminal window: you see it run and can answer Claude's prompts.")
             : L("看不到过程，跑完弹通知。Claude 会自动接受改文件，没人在场点「允许」。",
                 "Runs unseen and notifies when done. Claude auto-accepts edits since no one is there to click Allow.")
+    }
+
+    @objc private func updateScheduleNote() {
+        var note = L("SpectiX 开着时才会到点跑；电脑睡着错过的，醒来补跑一次。",
+                     "Runs only while SpectiX is open; a run missed while the Mac slept is made up once on wake.")
+        if confirm.state == .on {
+            note += L("到点跑时不会先问你。", " Timed runs don't ask first.")
+        }
+        scheduleEditor.footnote = note
     }
 
     private func setEmoji(_ e: String?) {
@@ -1807,7 +1902,8 @@ final class QuickActionForm: NSView, NSSearchFieldDelegate, NSTableViewDataSourc
                            emoji: e.isEmpty ? nil : e, name: n, kind: selectedKind, body: b,
                            cwd: c.isEmpty ? nil : c,
                            inTerminal: whereSeg.selectedSegment == 1 ? true : nil,
-                           confirm: confirm.state == .on ? true : nil)
+                           confirm: confirm.state == .on ? true : nil,
+                           schedule: scheduleEditor.schedule)
     }
 
     @objc private func saveAction() {
@@ -1895,6 +1991,6 @@ final class QuickActionResultWindow: NSObject {
     @objc private static func runAgain() {
         guard let k = shownKey, let r = QuickActionRunner.shared.results[k] else { return }
         window?.close()
-        QuickActionRunner.shared.run(r.action)
+        QuickActionRunner.shared.run(QuickActionStore.shared.actions.first { $0.key == k } ?? r.action)
     }
 }

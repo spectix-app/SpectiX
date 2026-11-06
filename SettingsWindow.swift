@@ -1867,7 +1867,7 @@ final class SettingsPane: NSView {
             done(false, L("地址无效", "invalid address")); return
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            let out = spawnCapturing(["/usr/bin/curl", "-sS", "-m", "8", "-X", "POST",
+            let out = QuickActionRunner.capture(["/usr/bin/curl", "-sS", "-m", "8", "-X", "POST",
                                       "\(server)/\(key)",
                                       "-H", "Content-Type: application/json; charset=utf-8",
                                       "-d", jsonText]) ?? ""
@@ -1883,36 +1883,6 @@ final class SettingsPane: NSView {
         }
     }
 
-    // Run a command and return its stdout. Blocks, so call it off the main thread.
-    private static func spawnCapturing(_ argv: [String]) -> String? {
-        var fds: [Int32] = [0, 0]
-        guard pipe(&fds) == 0 else { return nil }
-        let readFD = fds[0], writeFD = fds[1]
-        var actions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&actions)
-        posix_spawn_file_actions_adddup2(&actions, writeFD, STDOUT_FILENO)
-        posix_spawn_file_actions_addclose(&actions, readFD)
-        var cargv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
-        defer {
-            cargv.forEach { free($0) }
-            posix_spawn_file_actions_destroy(&actions)
-        }
-        var pid: pid_t = 0
-        let rc = posix_spawn(&pid, argv[0], &actions, nil, &cargv, environ)
-        close(writeFD)
-        guard rc == 0 else { close(readFD); return nil }
-        var data = Data()
-        let buf = UnsafeMutableRawPointer.allocate(byteCount: 4096, alignment: 1)
-        defer { buf.deallocate() }
-        while true {
-            let n = read(readFD, buf, 4096)
-            if n <= 0 { break }
-            data.append(Data(bytes: buf, count: n))
-        }
-        close(readFD)
-        waitpid(pid, nil, 0)
-        return String(data: data, encoding: .utf8)
-    }
 
     // A card row with a plain choice popup on the right (no off-sentinel mapping,
     // no sound preview — see makeSoundRow for that variant).
